@@ -21,6 +21,7 @@ import (
 	"github.com/aws/aws-sdk-go/service/s3/s3manager"
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/cors"
+	"github.com/google/uuid"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
@@ -28,28 +29,30 @@ import (
 )
 
 type JSONData struct {
-	File_name        string
-	Vtx_devn_ratio   float32
-	Pointcount       int
-	Facecount        int
-	Vertexcount      int
-	Bbox_diagonal    float32
-	Polyisland_count int
-	Edge_len_avg     float32
-	Material_count   int32
-	Material_names   []string
-	Image_file_names []string
-	Tri_ratio_median float32
-	Conn_avg         float32
-	Min_offset       float32
-	Offset_ratio     float32
-	Surface_area     float32
-	Max_offset       float32
-	Border_ratio     float32
-	Tri_ratio_avg    float32
-	Curvature_avg    float32
-	Rating_raw       float32
-	Rating           int8
+	File_name           string
+	Vtx_devn_ratio      float32
+	Pointcount          int
+	Facecount           int
+	Vertexcount         int
+	Bbox_diagonal       float32
+	Polyisland_count    int
+	Edge_len_avg        float32
+	Material_count      int32
+	Material_names      []string
+	Image_file_names    []string
+	Tri_ratio_median    float32
+	Conn_avg            float32
+	Min_offset          float32
+	Offset_ratio        float32
+	Surface_area        float32
+	Max_offset          float32
+	Border_ratio        float32
+	Tri_ratio_avg       float32
+	Curvature_avg       float32
+	Rating_raw          float32
+	Rating              int8
+	Universal_uuid      string
+	Parent_Package_Name string
 }
 
 type DirectoryIterator struct {
@@ -133,8 +136,14 @@ func main() {
 		AllowOrigins: "http://localhost:3000",
 		AllowHeaders: "Origin, Content-Type, Accept"}))
 
-	app.Post("/send", func(c *fiber.Ctx) error {
+	app.Post("/send/:flag", func(c *fiber.Ctx) error {
 		// Receives all the header + file
+
+		/* choiceFlag := c.Params("flag")
+		if choiceFlag == "newVersion" {
+			return c.SendString("New Version")
+		} */
+
 		fileFromPost, err := c.FormFile("File")
 		if err != nil {
 			return errorFormated(err, c)
@@ -143,6 +152,7 @@ func main() {
 		fileName := fileFromPost.Filename
 		fileNameOnly := strings.TrimSuffix(fileName, filepath.Ext(fileName))
 		fmt.Println(fileNameOnly)
+
 		// Check if the file is a zip file
 		if filepath.Ext(fileName) != ".zip" {
 			c.SendString("Wrong file format!")
@@ -242,6 +252,25 @@ func main() {
 		}
 		archive.Close()
 		file.Close()
+
+		// Creates UUID
+		id := uuid.New()
+
+		// Rename img folder file names
+		imgBaseDir := "./output/car/img/"
+		dir, err := os.ReadDir(imgBaseDir)
+		if err != nil {
+			return errorFormated(err, c)
+		}
+		for i := range dir {
+			singleImageCurrentDir := imgBaseDir + dir[i].Name()
+			singleImageNewDir := imgBaseDir + id.String() + dir[i].Name()
+			err = os.Rename(singleImageCurrentDir, singleImageNewDir)
+			if err != nil {
+				fmt.Println(err)
+			}
+		}
+
 		// Eliminate the zip file
 		err = os.Remove("./" + fileName)
 		if err != nil {
@@ -260,9 +289,16 @@ func main() {
 			return errorFormated(err, c)
 		}
 
+		// Updates the parent package name and the UUID
+		result[0].Universal_uuid = id.String()
+		result[0].Parent_Package_Name = fileName
+		for i := range result[0].Image_file_names {
+			result[0].Image_file_names[i] = id.String() + result[0].Image_file_names[i]
+		}
+
 		// Connect to database
 		// Set client options, the string is the connection to the mongo uri
-		clientOptions := options.Client().ApplyURI("mongodb://mongo:3jrKeUXDbHJ97Rlo9Jor@containers-us-west-67.railway.app:6010")
+		clientOptions := options.Client().ApplyURI("mongodb://mongo:GfiepZ9Nb9tfcdUyv8Vl@containers-us-west-144.railway.app:6316")
 
 		// Connect to MongoDB
 		client, err := mongo.Connect(context.TODO(), clientOptions)
@@ -346,7 +382,6 @@ func main() {
 			return errorFormated(err, c)
 		}
 		return c.SendString("Finished")
-
 	})
 
 	log.Fatal(app.Listen(":4000"))
