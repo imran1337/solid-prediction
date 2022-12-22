@@ -15,15 +15,10 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/aws/session"
-	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/aws/aws-sdk-go/service/s3/s3manager"
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/cors"
 	"github.com/google/uuid"
-	"go.mongodb.org/mongo-driver/bson"
-	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
 )
@@ -53,6 +48,8 @@ type JSONData struct {
 	Rating              int8
 	Universal_uuid      string
 	Parent_Package_Name string
+	Version             int
+	Vendor              string
 }
 
 type DirectoryIterator struct {
@@ -257,7 +254,7 @@ func main() {
 		id := uuid.New()
 
 		// Rename img folder file names
-		imgBaseDir := "./output/car/img/"
+		imgBaseDir := "./output/" + fileNameOnly + "/img/"
 		dir, err := os.ReadDir(imgBaseDir)
 		if err != nil {
 			return errorFormated(err, c)
@@ -277,8 +274,20 @@ func main() {
 			return errorFormated(err, c)
 		}
 
-		// Read JSON file
-		byteValue, err := ioutil.ReadFile("./output/" + fileNameOnly + "/info.json")
+		JSONDir, err := os.ReadDir("./output/" + fileNameOnly)
+		if err != nil {
+			return errorFormated(err, c)
+		}
+		var JSONFile string
+		for _, JSONDirFile := range JSONDir {
+			if filepath.Ext(JSONDirFile.Name()) == ".json" {
+				JSONFile = JSONDirFile.Name()
+			}
+
+		}
+		// Read JSON file, would it be better to just search for the JSON file in the filesystem
+		pathToJson := filepath.Join(fileNameOnly, JSONFile)
+		byteValue, err := ioutil.ReadFile("./output/" + pathToJson)
 		if err != nil {
 			return errorFormated(err, c)
 		}
@@ -289,18 +298,24 @@ func main() {
 			return errorFormated(err, c)
 		}
 
-		// Updates the parent package name and the UUID
-		result[0].Universal_uuid = id.String()
-		result[0].Parent_Package_Name = fileName
-		for i := range result[0].Image_file_names {
-			result[0].Image_file_names[i] = id.String() + result[0].Image_file_names[i]
+		// Updates certain properties of the JSON file
+		for iStruct := range result {
+			result[iStruct].Universal_uuid = id.String()
+			result[iStruct].Parent_Package_Name = fileNameOnly
+			result[iStruct].Version = 1
+			result[iStruct].Vendor = "Volkswagen"
+			for iImages := range result[iStruct].Image_file_names {
+				result[iStruct].Image_file_names[iImages] = id.String() + result[iStruct].Image_file_names[iImages]
+			}
 		}
 
 		// Connect to database
 		// Set client options, the string is the connection to the mongo uri
+
 		clientOptions := options.Client().ApplyURI("mongodb://mongo:GfiepZ9Nb9tfcdUyv8Vl@containers-us-west-144.railway.app:6316")
 
 		// Connect to MongoDB
+
 		client, err := mongo.Connect(context.TODO(), clientOptions)
 		if err != nil {
 			return errorFormated(err, c)
@@ -311,7 +326,7 @@ func main() {
 		collection := client.Database("test").Collection("JSONInfo")
 
 		// Check if the files already exist
-		filter := bson.D{{Key: "file_name", Value: result[0].File_name}}
+		/*filter := bson.D{{Key: "file_name", Value: result[0].File_name}}
 		var searchResult JSONData
 		err = collection.FindOne(context.TODO(), filter).Decode(&searchResult)
 		if err != mongo.ErrNoDocuments {
@@ -319,68 +334,79 @@ func main() {
 		}
 		if searchResult.File_name == result[0].File_name {
 			return c.SendString("File Already Exists")
+		}*/
+		// Insert many
+		newResults := []interface{}{}
+		for i := range result {
+			newResults = append(newResults, result[i])
+		}
+
+		_, err = collection.InsertMany(context.TODO(), newResults)
+		if err != nil {
+			return errorFormated(err, c)
 		}
 
 		// send data of one entry
 		// I can get access to the UUID through the object it outputs
-		insertedObj, err := collection.InsertOne(context.TODO(), result[0])
+		/*insertedObj, err := collection.InsertOne(context.TODO(), result[0])
 		if err != nil {
 			return errorFormated(err, c)
 		}
 		insertedObjID := insertedObj.InsertedID.(primitive.ObjectID).Hex()
 		fmt.Println(insertedObjID)
-
+		*/
 		// Initialize a session.
-		sess, err := session.NewSessionWithOptions(session.Options{
-			Config: aws.Config{
-				Region: aws.String("eu-central-1"),
-			},
-		})
-		svc := s3.New(sess)
-		if err != nil {
-			return errorFormated(err, c)
-		}
-		bucket := "slim-test-bucket"
-		// Check for items in the bucket
-		s3Keys := make([]string, 0)
-		if err := svc.ListObjectsPagesWithContext(context.TODO(), &s3.ListObjectsInput{
-			Bucket: aws.String(bucket),
-			Prefix: aws.String(fileNameOnly),
-		}, func(o *s3.ListObjectsOutput, b bool) bool {
-			for _, o := range o.Contents {
-				s3Keys = append(s3Keys, *o.Key)
-			}
-			return true
-		}); err != nil {
-			return errorFormated(err, c)
-		}
-
-		// If in the bucket we have a folder with the same name, we delete the information on the JSON, and stop the execution
-		if len(s3Keys) > 0 {
-			filter2 := bson.D{{Key: "file_name", Value: result[0].File_name}}
-			_, err = collection.DeleteOne(context.TODO(), filter2)
+		/*
+			sess, err := session.NewSessionWithOptions(session.Options{
+				Config: aws.Config{
+					Region: aws.String("eu-central-1"),
+				},
+			})
+			svc := s3.New(sess)
 			if err != nil {
 				return errorFormated(err, c)
 			}
-			return c.SendString("File already exists")
-		}
+			bucket := "slim-test-bucket"
+			// Check for items in the bucket
+			s3Keys := make([]string, 0)
+			if err := svc.ListObjectsPagesWithContext(context.TODO(), &s3.ListObjectsInput{
+				Bucket: aws.String(bucket),
+				Prefix: aws.String(fileNameOnly),
+			}, func(o *s3.ListObjectsOutput, b bool) bool {
+				for _, o := range o.Contents {
+					s3Keys = append(s3Keys, *o.Key)
+				}
+				return true
+			}); err != nil {
+				return errorFormated(err, c)
+			}
 
-		// Initialize variables to upload to bucket
+			// If in the bucket we have a folder with the same name, we delete the information on the JSON, and stop the execution
+			if len(s3Keys) > 0 {
+				filter2 := bson.D{{Key: "file_name", Value: result[0].File_name}}
+				_, err = collection.DeleteOne(context.TODO(), filter2)
+				if err != nil {
+					return errorFormated(err, c)
+				}
+				return c.SendString("File already exists")
+			}
 
-		path := "./output/" + fileNameOnly + "/img"
-		iter := NewDirectoryIterator(bucket, path)
-		uploader := s3manager.NewUploader(sess)
+			// Initialize variables to upload to bucket
 
-		// Upload to Bucket
-		if err := uploader.UploadWithIterator(aws.BackgroundContext(), iter); err != nil {
-			return errorFormated(err, c)
-		}
-		fmt.Printf("Successfully uploaded %q to %q", path, bucket)
-		// Delete the created files
-		err = os.RemoveAll("./output")
-		if err != nil {
-			return errorFormated(err, c)
-		}
+			path := "./output/" + fileNameOnly + "/img"
+			iter := NewDirectoryIterator(bucket, path)
+			uploader := s3manager.NewUploader(sess)
+
+			// Upload to Bucket
+			if err := uploader.UploadWithIterator(aws.BackgroundContext(), iter); err != nil {
+				return errorFormated(err, c)
+			}
+			fmt.Printf("Successfully uploaded %q to %q", path, bucket)
+			// Delete the created files
+			err = os.RemoveAll("./output")
+			if err != nil {
+				return errorFormated(err, c)
+			}*/
 		return c.SendString("Finished")
 	})
 
