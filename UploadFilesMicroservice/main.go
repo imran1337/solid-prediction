@@ -2,6 +2,7 @@ package main
 
 import (
 	"archive/zip"
+	"bytes"
 	"context"
 	"crypto/aes"
 	"crypto/cipher"
@@ -11,13 +12,13 @@ import (
 	"io"
 	"io/ioutil"
 	"log"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/session"
-	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/aws/aws-sdk-go/service/s3/s3manager"
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/cors"
@@ -64,6 +65,11 @@ type DirectoryIterator struct {
 		f    *os.File
 	}
 	err error
+}
+
+type Message struct {
+	UUID     string
+	FileName string
 }
 
 func NewDirectoryIterator(bucket, dir string) s3manager.BatchUploadIterator {
@@ -136,20 +142,31 @@ func main() {
 		AllowHeaders: "Origin, Content-Type, Accept"}))
 
 	app.Post("/send/:flag", func(c *fiber.Ctx) error {
+		choiceFlag := c.Params("flag")
+
+		// Creates UUID
+		id := uuid.New()
+
 		// Receives all the header + file
 
-		choiceFlag := c.Params("flag")
-		// Normal flag is the usual branch the file follows,
+		fileFromPost, err := c.FormFile("File")
+		if err != nil {
+			return errorFormated(err, c)
+		}
+
+		fileName := fileFromPost.Filename
+		fileNameOnly := strings.TrimSuffix(fileName, filepath.Ext(fileName))
+		fmt.Println(fileNameOnly)
+
+		// Check if the file is a zip file
+		if filepath.Ext(fileName) != ".zip" {
+			c.SendString("Wrong file format!")
+			return c.SendStatus(500)
+		}
+
+		// Normal flag is the usual branch the file follows, if it's a duplicate the front end will be notified, and a new branch will activate.
+
 		if choiceFlag == "normal" {
-
-			fileFromPost, err := c.FormFile("File")
-			if err != nil {
-				return errorFormated(err, c)
-			}
-
-			fileName := fileFromPost.Filename
-			fileNameOnly := strings.TrimSuffix(fileName, filepath.Ext(fileName))
-			fmt.Println(fileNameOnly)
 
 			// Check if the file is a zip file
 			if filepath.Ext(fileName) != ".zip" {
@@ -250,9 +267,6 @@ func main() {
 			}
 			archive.Close()
 			file.Close()
-
-			// Creates UUID
-			id := uuid.New()
 
 			// Rename img folder file names
 			imgBaseDir := "./output/" + fileNameOnly + "/img/"
@@ -365,34 +379,10 @@ func main() {
 					Region: aws.String("eu-central-1"),
 				},
 			})
-			svc := s3.New(sess)
 			if err != nil {
 				return errorFormated(err, c)
 			}
 			bucket := "slim-test-bucket"
-			// Check for items in the bucket
-			s3Keys := make([]string, 0)
-			if err := svc.ListObjectsPagesWithContext(context.TODO(), &s3.ListObjectsInput{
-				Bucket: aws.String(bucket),
-				Prefix: aws.String(fileNameOnly),
-			}, func(o *s3.ListObjectsOutput, b bool) bool {
-				for _, o := range o.Contents {
-					s3Keys = append(s3Keys, *o.Key)
-				}
-				return true
-			}); err != nil {
-				return errorFormated(err, c)
-			}
-
-			// If in the bucket we have a folder with the same name, we delete the information on the JSON, and stop the execution
-			if len(s3Keys) > 0 {
-				filter2 := bson.D{{Key: "file_name", Value: result[0].File_name}}
-				_, err = collection.DeleteOne(context.TODO(), filter2)
-				if err != nil {
-					return errorFormated(err, c)
-				}
-				return c.SendString("File already exists")
-			}
 
 			// Initialize variables to upload to bucket
 
@@ -410,10 +400,31 @@ func main() {
 			if err != nil {
 				return errorFormated(err, c)
 			}
+
+			// Create a new instance of Message
+			message := Message{
+				UUID:     id.String(),
+				FileName: fileNameOnly,
+			}
+
+			// Marshal it into JSON prior to requesting
+			messageJSON, err := json.Marshal(message)
+			if err != nil {
+				return errorFormated(err, c)
+			}
+
+			// Make request with marshalled JSON as the POST body
+			_, err = http.Post("http://127.0.0.1:5000/FeatureMapMicroservice", "application/json",
+				bytes.NewBuffer(messageJSON))
+			if err != nil {
+				return errorFormated(err, c)
+			}
+
 			return c.SendString("Finished")
 		}
 		if choiceFlag == "newVersion" {
-			return c.SendString("New Version")
+			c.SendString("New Version")
+
 		}
 		return c.SendStatus(500)
 	})
