@@ -15,10 +15,14 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go/aws/session"
+	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/aws/aws-sdk-go/service/s3/s3manager"
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/cors"
 	"github.com/google/uuid"
+	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
 )
@@ -105,10 +109,8 @@ func (iter *DirectoryIterator) Err() error {
 // close the file. UploadObject is a method of NewDirectoryIterator
 func (iter *DirectoryIterator) UploadObject() s3manager.BatchUploadObject {
 	f := iter.next.f
-	fmt.Println(f.Name())
 	fileName := filepath.Base(f.Name())
-	dirList := strings.Split(f.Name(), "\\")
-	newPath := "/" + dirList[1] + "/" + fileName
+	newPath := "/img/" + fileName
 	return s3manager.BatchUploadObject{
 		Object: &s3manager.UploadInput{
 			Bucket: &iter.bucket,
@@ -136,227 +138,228 @@ func main() {
 	app.Post("/send/:flag", func(c *fiber.Ctx) error {
 		// Receives all the header + file
 
-		/* choiceFlag := c.Params("flag")
-		if choiceFlag == "newVersion" {
-			return c.SendString("New Version")
-		} */
+		choiceFlag := c.Params("flag")
+		// Normal flag is the usual branch the file follows,
+		if choiceFlag == "normal" {
 
-		fileFromPost, err := c.FormFile("File")
-		if err != nil {
-			return errorFormated(err, c)
-		}
-
-		fileName := fileFromPost.Filename
-		fileNameOnly := strings.TrimSuffix(fileName, filepath.Ext(fileName))
-		fmt.Println(fileNameOnly)
-
-		// Check if the file is a zip file
-		if filepath.Ext(fileName) != ".zip" {
-			c.SendString("Wrong file format!")
-			return c.SendStatus(500)
-
-		}
-
-		multiPartfile, err := fileFromPost.Open()
-		if err != nil {
-			return errorFormated(err, c)
-		}
-
-		defer multiPartfile.Close()
-
-		encryptedFile, err := ioutil.ReadAll(multiPartfile)
-		if err != nil {
-			return errorFormated(err, c)
-		}
-
-		// Key 32 bytes length
-		key, _ := ioutil.ReadFile("RandomNumbers")
-		block, err := aes.NewCipher(key)
-		if err != nil {
-			return errorFormated(err, c)
-		}
-		// We are going to use the GCM mode, which is a stream mode with authentication.
-		// So we don’t have to worry about the padding or doing the authentication, since it is already done by the package.
-		gcm, err := cipher.NewGCM(block)
-		if err != nil {
-			return errorFormated(err, c)
-		}
-		// This mode requires a nonce array. It works like an IV.
-		// Make sure this is never the same value, that is, change it every time you will encrypt, even if it is the same file.
-		// You can do this with a random value, using the package crypto/rand.
-		// Never use more than 2^32 random nonces with a given key because of the risk of repeat.
-		nonce := make([]byte, gcm.NonceSize())
-		if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
-			return errorFormated(err, c)
-		}
-
-		// Removing the nonce
-		nonce2 := encryptedFile[:gcm.NonceSize()]
-		encryptedFile = encryptedFile[gcm.NonceSize():]
-		decryptedFile, err := gcm.Open(nil, nonce2, encryptedFile, nil)
-		if err != nil {
-			return errorFormated(err, c)
-		}
-		err = ioutil.WriteFile(fileName, decryptedFile, 0777)
-		if err != nil {
-			return errorFormated(err, c)
-		}
-		file, err := os.Open(fileName)
-		if err != nil {
-			return errorFormated(err, c)
-		}
-
-		// Unzip to temp folder?
-		dst := "output"
-		archive, err := zip.OpenReader(fileFromPost.Filename)
-		if err != nil {
-			return errorFormated(err, c)
-		}
-
-		for _, f := range archive.File {
-			filePath := filepath.Join(dst, f.Name)
-			fmt.Println("unzipping file", filePath)
-
-			if !strings.HasPrefix(filePath, filepath.Clean(dst)+string(os.PathSeparator)) {
-				fmt.Println("Invalid File Path")
-			}
-			if f.FileInfo().IsDir() {
-				fmt.Println("Creating directory...")
-
-				os.MkdirAll(filePath, os.ModePerm)
-				continue
-			}
-			if err := os.MkdirAll(filepath.Dir(filePath), os.ModePerm); err != nil {
-				panic(err)
-			}
-
-			dstFile, err := os.OpenFile(filePath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, f.Mode())
+			fileFromPost, err := c.FormFile("File")
 			if err != nil {
 				return errorFormated(err, c)
 			}
 
-			fileInArchive, err := f.Open()
+			fileName := fileFromPost.Filename
+			fileNameOnly := strings.TrimSuffix(fileName, filepath.Ext(fileName))
+			fmt.Println(fileNameOnly)
+
+			// Check if the file is a zip file
+			if filepath.Ext(fileName) != ".zip" {
+				c.SendString("Wrong file format!")
+				return c.SendStatus(500)
+
+			}
+
+			multiPartfile, err := fileFromPost.Open()
 			if err != nil {
 				return errorFormated(err, c)
 			}
 
-			if _, err := io.Copy(dstFile, fileInArchive); err != nil {
+			defer multiPartfile.Close()
+
+			encryptedFile, err := ioutil.ReadAll(multiPartfile)
+			if err != nil {
 				return errorFormated(err, c)
 			}
-			dstFile.Close()
-			fileInArchive.Close()
 
-		}
-		archive.Close()
-		file.Close()
-
-		// Creates UUID
-		id := uuid.New()
-
-		// Rename img folder file names
-		imgBaseDir := "./output/" + fileNameOnly + "/img/"
-		dir, err := os.ReadDir(imgBaseDir)
-		if err != nil {
-			return errorFormated(err, c)
-		}
-		for i := range dir {
-			singleImageCurrentDir := imgBaseDir + dir[i].Name()
-			singleImageNewDir := imgBaseDir + id.String() + dir[i].Name()
-			err = os.Rename(singleImageCurrentDir, singleImageNewDir)
+			// Key 32 bytes length
+			key, _ := ioutil.ReadFile("RandomNumbers")
+			block, err := aes.NewCipher(key)
 			if err != nil {
-				fmt.Println(err)
+				return errorFormated(err, c)
 			}
-		}
-
-		// Eliminate the zip file
-		err = os.Remove("./" + fileName)
-		if err != nil {
-			return errorFormated(err, c)
-		}
-
-		JSONDir, err := os.ReadDir("./output/" + fileNameOnly)
-		if err != nil {
-			return errorFormated(err, c)
-		}
-		var JSONFile string
-		for _, JSONDirFile := range JSONDir {
-			if filepath.Ext(JSONDirFile.Name()) == ".json" {
-				JSONFile = JSONDirFile.Name()
+			// We are going to use the GCM mode, which is a stream mode with authentication.
+			// So we don’t have to worry about the padding or doing the authentication, since it is already done by the package.
+			gcm, err := cipher.NewGCM(block)
+			if err != nil {
+				return errorFormated(err, c)
+			}
+			// This mode requires a nonce array. It works like an IV.
+			// Make sure this is never the same value, that is, change it every time you will encrypt, even if it is the same file.
+			// You can do this with a random value, using the package crypto/rand.
+			// Never use more than 2^32 random nonces with a given key because of the risk of repeat.
+			nonce := make([]byte, gcm.NonceSize())
+			if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
+				return errorFormated(err, c)
 			}
 
-		}
-		// Read JSON file, would it be better to just search for the JSON file in the filesystem
-		pathToJson := filepath.Join(fileNameOnly, JSONFile)
-		byteValue, err := ioutil.ReadFile("./output/" + pathToJson)
-		if err != nil {
-			return errorFormated(err, c)
-		}
-
-		var result []JSONData
-		err = json.Unmarshal(byteValue, &result)
-		if err != nil {
-			return errorFormated(err, c)
-		}
-
-		// Updates certain properties of the JSON file
-		for iStruct := range result {
-			result[iStruct].Universal_uuid = id.String()
-			result[iStruct].Parent_Package_Name = fileNameOnly
-			result[iStruct].Version = 1
-			result[iStruct].Vendor = "Volkswagen"
-			for iImages := range result[iStruct].Image_file_names {
-				result[iStruct].Image_file_names[iImages] = id.String() + result[iStruct].Image_file_names[iImages]
+			// Removing the nonce
+			nonce2 := encryptedFile[:gcm.NonceSize()]
+			encryptedFile = encryptedFile[gcm.NonceSize():]
+			decryptedFile, err := gcm.Open(nil, nonce2, encryptedFile, nil)
+			if err != nil {
+				return errorFormated(err, c)
 			}
-		}
+			err = ioutil.WriteFile(fileName, decryptedFile, 0777)
+			if err != nil {
+				return errorFormated(err, c)
+			}
+			file, err := os.Open(fileName)
+			if err != nil {
+				return errorFormated(err, c)
+			}
 
-		// Connect to database
-		// Set client options, the string is the connection to the mongo uri
+			// Unzip to temp folder?
+			dst := "output"
+			archive, err := zip.OpenReader(fileFromPost.Filename)
+			if err != nil {
+				return errorFormated(err, c)
+			}
 
-		clientOptions := options.Client().ApplyURI("mongodb://mongo:GfiepZ9Nb9tfcdUyv8Vl@containers-us-west-144.railway.app:6316")
+			for _, f := range archive.File {
+				filePath := filepath.Join(dst, f.Name)
+				fmt.Println("unzipping file", filePath)
 
-		// Connect to MongoDB
+				if !strings.HasPrefix(filePath, filepath.Clean(dst)+string(os.PathSeparator)) {
+					fmt.Println("Invalid File Path")
+				}
+				if f.FileInfo().IsDir() {
+					fmt.Println("Creating directory...")
 
-		client, err := mongo.Connect(context.TODO(), clientOptions)
-		if err != nil {
-			return errorFormated(err, c)
-		}
+					os.MkdirAll(filePath, os.ModePerm)
+					continue
+				}
+				if err := os.MkdirAll(filepath.Dir(filePath), os.ModePerm); err != nil {
+					panic(err)
+				}
 
-		// get collection as ref, the name of the database, then the name of the collection
+				dstFile, err := os.OpenFile(filePath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, f.Mode())
+				if err != nil {
+					return errorFormated(err, c)
+				}
 
-		collection := client.Database("test").Collection("JSONInfo")
+				fileInArchive, err := f.Open()
+				if err != nil {
+					return errorFormated(err, c)
+				}
 
-		// Check if the files already exist
-		/*filter := bson.D{{Key: "file_name", Value: result[0].File_name}}
-		var searchResult JSONData
-		err = collection.FindOne(context.TODO(), filter).Decode(&searchResult)
-		if err != mongo.ErrNoDocuments {
-			return errorFormated(err, c)
-		}
-		if searchResult.File_name == result[0].File_name {
-			return c.SendString("File Already Exists")
-		}*/
-		// Insert many
-		newResults := []interface{}{}
-		for i := range result {
-			newResults = append(newResults, result[i])
-		}
+				if _, err := io.Copy(dstFile, fileInArchive); err != nil {
+					return errorFormated(err, c)
+				}
+				dstFile.Close()
+				fileInArchive.Close()
 
-		_, err = collection.InsertMany(context.TODO(), newResults)
-		if err != nil {
-			return errorFormated(err, c)
-		}
+			}
+			archive.Close()
+			file.Close()
 
-		// send data of one entry
-		// I can get access to the UUID through the object it outputs
-		/*insertedObj, err := collection.InsertOne(context.TODO(), result[0])
-		if err != nil {
-			return errorFormated(err, c)
-		}
-		insertedObjID := insertedObj.InsertedID.(primitive.ObjectID).Hex()
-		fmt.Println(insertedObjID)
-		*/
-		// Initialize a session.
-		/*
+			// Creates UUID
+			id := uuid.New()
+
+			// Rename img folder file names
+			imgBaseDir := "./output/" + fileNameOnly + "/img/"
+			dir, err := os.ReadDir(imgBaseDir)
+			if err != nil {
+				return errorFormated(err, c)
+			}
+			for i := range dir {
+				singleImageCurrentDir := imgBaseDir + dir[i].Name()
+				singleImageNewDir := imgBaseDir + id.String() + dir[i].Name()
+				err = os.Rename(singleImageCurrentDir, singleImageNewDir)
+				if err != nil {
+					fmt.Println(err)
+				}
+			}
+
+			// Eliminate the zip file
+			err = os.Remove("./" + fileName)
+			if err != nil {
+				return errorFormated(err, c)
+			}
+
+			JSONDir, err := os.ReadDir("./output/" + fileNameOnly)
+			if err != nil {
+				return errorFormated(err, c)
+			}
+			var JSONFile string
+			for _, JSONDirFile := range JSONDir {
+				if filepath.Ext(JSONDirFile.Name()) == ".json" {
+					JSONFile = JSONDirFile.Name()
+				}
+
+			}
+			// Read JSON file, would it be better to just search for the JSON file in the filesystem
+			pathToJson := filepath.Join(fileNameOnly, JSONFile)
+			byteValue, err := ioutil.ReadFile("./output/" + pathToJson)
+			if err != nil {
+				return errorFormated(err, c)
+			}
+
+			var result []JSONData
+			err = json.Unmarshal(byteValue, &result)
+			if err != nil {
+				return errorFormated(err, c)
+			}
+
+			// Updates certain properties of the JSON file
+			for iStruct := range result {
+				result[iStruct].Universal_uuid = id.String()
+				result[iStruct].Parent_Package_Name = fileNameOnly
+				result[iStruct].Version = 1
+				result[iStruct].Vendor = "Volkswagen"
+				for iImages := range result[iStruct].Image_file_names {
+					result[iStruct].Image_file_names[iImages] = id.String() + result[iStruct].Image_file_names[iImages]
+				}
+			}
+
+			// Connect to database
+			// Set client options, the string is the connection to the mongo uri
+
+			clientOptions := options.Client().ApplyURI("mongodb://mongo:GfiepZ9Nb9tfcdUyv8Vl@containers-us-west-144.railway.app:6316")
+
+			// Connect to MongoDB
+
+			client, err := mongo.Connect(context.TODO(), clientOptions)
+			if err != nil {
+				return errorFormated(err, c)
+			}
+
+			// get collection as ref, the name of the database, then the name of the collection
+
+			collection := client.Database("test").Collection("JSONInfo")
+
+			// Check if the files already exist
+			filter := bson.D{{Key: "parent_package_name", Value: fileNameOnly}}
+			cursor, err := collection.Find(context.TODO(), filter)
+			if err != nil {
+				if err == mongo.ErrNoDocuments {
+					fmt.Println("Clear")
+				}
+				return errorFormated(err, c)
+			}
+			var results []JSONData
+			if err = cursor.All(context.TODO(), &results); err != nil {
+				return errorFormated(err, c)
+			}
+			if len(results) > 0 {
+				err = os.RemoveAll("./output")
+				if err != nil {
+					return errorFormated(err, c)
+				}
+				return c.SendString("File already exists!")
+			}
+
+			// Insert many
+			newResults := []interface{}{}
+			for i := range result {
+				newResults = append(newResults, result[i])
+			}
+
+			_, err = collection.InsertMany(context.TODO(), newResults)
+			if err != nil {
+				return errorFormated(err, c)
+			}
+
+			// Initialize a session.
+
 			sess, err := session.NewSessionWithOptions(session.Options{
 				Config: aws.Config{
 					Region: aws.String("eu-central-1"),
@@ -406,8 +409,13 @@ func main() {
 			err = os.RemoveAll("./output")
 			if err != nil {
 				return errorFormated(err, c)
-			}*/
-		return c.SendString("Finished")
+			}
+			return c.SendString("Finished")
+		}
+		if choiceFlag == "newVersion" {
+			return c.SendString("New Version")
+		}
+		return c.SendStatus(500)
 	})
 
 	log.Fatal(app.Listen(":4000"))
