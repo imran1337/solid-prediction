@@ -23,6 +23,7 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/cors"
 	"github.com/google/uuid"
+	"github.com/joho/godotenv"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
@@ -135,8 +136,13 @@ func errorFormated(errorMessage error, c *fiber.Ctx) error {
 }
 
 func main() {
+	err := godotenv.Load()
+	if err != nil {
+		log.Fatal("Error loading .env file")
+	}
+
 	app := fiber.New()
-	// To allow cross origin
+	// To allow cross origin, only for local development
 	app.Use(cors.New(cors.Config{
 		AllowOrigins: "http://localhost:3000",
 		AllowHeaders: "Origin, Content-Type, Accept"}))
@@ -326,8 +332,8 @@ func main() {
 
 			// Connect to database
 			// Set client options, the string is the connection to the mongo uri
-
-			clientOptions := options.Client().ApplyURI("mongodb://mongo:GfiepZ9Nb9tfcdUyv8Vl@containers-us-west-144.railway.app:6316")
+			mongoDBURI := os.Getenv("MONGODB_URI")
+			clientOptions := options.Client().ApplyURI(mongoDBURI)
 
 			// Connect to MongoDB
 
@@ -382,19 +388,19 @@ func main() {
 			if err != nil {
 				return errorFormated(err, c)
 			}
-			bucket := "slim-test-bucket"
+			s3Bucket := os.Getenv("S3_BUCKET")
 
 			// Initialize variables to upload to bucket
 
 			path := "./output/" + fileNameOnly + "/img"
-			iter := NewDirectoryIterator(bucket, path)
+			iter := NewDirectoryIterator(s3Bucket, path)
 			uploader := s3manager.NewUploader(sess)
 
 			// Upload to Bucket
 			if err := uploader.UploadWithIterator(aws.BackgroundContext(), iter); err != nil {
 				return errorFormated(err, c)
 			}
-			fmt.Printf("Successfully uploaded %q to %q", path, bucket)
+			fmt.Printf("Successfully uploaded %q to %q", path, s3Bucket)
 			// Delete the created files
 			err = os.RemoveAll("./output")
 			if err != nil {
@@ -412,9 +418,10 @@ func main() {
 			if err != nil {
 				return errorFormated(err, c)
 			}
+			pythonServerURL := os.Getenv("PYTHON_SERVER_URL")
 
 			// Make request with marshalled JSON as the POST body
-			_, err = http.Post("http://127.0.0.1:5000/FeatureMapMicroservice", "application/json",
+			_, err = http.Post(pythonServerURL, "application/json",
 				bytes.NewBuffer(messageJSON))
 			if err != nil {
 				return errorFormated(err, c)
