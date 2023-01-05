@@ -23,7 +23,6 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/cors"
 	"github.com/google/uuid"
-	"github.com/joho/godotenv"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
@@ -136,10 +135,10 @@ func errorFormated(errorMessage error, c *fiber.Ctx) error {
 }
 
 func main() {
-	err := godotenv.Load()
+	/* err := godotenv.Load()
 	if err != nil {
-		log.Fatal("Error loading .env file")
-	}
+		fmt.Printf("Error loading .env file")
+	} */
 
 	app := fiber.New()
 	// To allow cross origin, only for local development
@@ -436,5 +435,10 @@ func main() {
 		return c.SendStatus(500)
 	})
 
-	log.Fatal(app.Listen(":4000"))
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "5000"
+	}
+
+	log.Fatal(app.Listen(":" + port))
 }
