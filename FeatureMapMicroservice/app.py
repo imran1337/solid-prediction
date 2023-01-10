@@ -28,7 +28,7 @@ def FeatureMapMicroservice():
     indexer = Index()
 
     bucket = s3.Bucket(bucketName)
-    objs = bucket.objects.filter(Prefix="img/" + content.UUID)
+    objs = bucket.objects.filter(Prefix="img/" + content['UUID'])
 
     #idx=0
     for obj in objs:
@@ -38,7 +38,7 @@ def FeatureMapMicroservice():
         fileName = obj.key.replace("img/", "featuremap/" ).rsplit('.', 1)[0] + ".bin"
         s3Client.upload_fileobj(io.BytesIO(awsImageBytesFeatures.tobytes()), bucketName, fileName)
 
-        # For testing purposes DO NOT RUN IN PRODUCTION PLS
+        # For testing purposes
         #if idx >= 5:
          #   break
         #idx += 1
@@ -46,6 +46,8 @@ def FeatureMapMicroservice():
     return "Received"
 @app.route("/AnnoyIndexer", methods=['POST'])
 def AnnoyIndexer():
+
+    indexer = Index()
 
     # Init AWS
     s3 = boto3.resource('s3')
@@ -80,9 +82,11 @@ def AnnoyIndexer():
         awsImageBytes = awsImage.get()['Body'].read()
 
         # These lines need to be checked. Dont know if they work
-
-        #arrayParts.append(numpy.frombuffer(awsImageBytes, dtype=numpy.float32))
+        arrayParts.append(numpy.frombuffer(awsImageBytes, dtype=numpy.float32))
         #print(arrayParts)
+        df = pandas.DataFrame()
+        df['features'] = arrParts
+        indexer.start_indexing(df, indexerPath, vendor)
         
         # Add a dataframe
         # Add the features to the dataframe and start the annoy Index
