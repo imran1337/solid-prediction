@@ -8,6 +8,7 @@ import os
 import io
 import numpy
 import pymongo
+import pandas
 
 app = Flask(__name__)
 
@@ -49,6 +50,8 @@ def AnnoyIndexer():
 
     indexer = Index()
 
+    vendor = "Volkswagen"
+
     # Init AWS
     s3 = boto3.resource('s3')
     bucketName = os.getenv("S3_BUCKET")
@@ -59,10 +62,12 @@ def AnnoyIndexer():
     myclient = pymongo.MongoClient("mongodb://mongo:FBbvQCE8X6T4wwqSpMvB@containers-us-west-107.railway.app:7638")
     mydb = myclient["test"]
     mycol = mydb["JSONInfo"]
-    myquery = {"vendor": "Volkswagen"}
+    myquery = {"vendor": vendor}
 
     mydoc = mycol.find(myquery)
     temp = []
+
+    # Check MongoDB to see if the JSON files have a PSF File
 
     for x in mydoc:
         temp += x['image_file_names']
@@ -81,22 +86,13 @@ def AnnoyIndexer():
 
         awsImageBytes = awsImage.get()['Body'].read()
 
-        # These lines need to be checked. Dont know if they work
+        # Preparing for Indexing and getting the annoy indexer
         arrayParts.append(numpy.frombuffer(awsImageBytes, dtype=numpy.float32))
         #print(arrayParts)
         df = pandas.DataFrame()
-        df['features'] = arrParts
-        indexer.start_indexing(df, indexerPath, vendor)
+        df['features'] = arrayParts
+        indexer.start_indexing(df, "C:\Projects\solid_prediction\FeatureMapMicroservice", vendor)
         
-        # Add a dataframe
-        # Add the features to the dataframe and start the annoy Index
-
-
-
-    #for obj in objs:
-    #    awsImageBytes = obj.get()['Body'].read()
-    
-    
-    #print(awsImageBytes)
+        # Send the annoy indexer to AWS
 
     return "Received"

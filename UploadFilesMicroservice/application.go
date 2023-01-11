@@ -52,10 +52,12 @@ type JSONData struct {
 	Curvature_avg       float32
 	Rating_raw          float32
 	Rating              int8
+	Psf_file_name       string
 	Universal_uuid      string
 	Parent_Package_Name string
 	Version             int
 	Vendor              string
+	User                string
 }
 
 type DirectoryIterator struct {
@@ -65,7 +67,8 @@ type DirectoryIterator struct {
 		path string
 		f    *os.File
 	}
-	err error
+	objType string
+	err     error
 }
 
 type Message struct {
@@ -73,7 +76,7 @@ type Message struct {
 	FileName string
 }
 
-func NewDirectoryIterator(bucket, dir string) s3manager.BatchUploadIterator {
+func NewDirectoryIterator(bucket, dir string, objType string) s3manager.BatchUploadIterator {
 	paths := []string{}
 	filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
 		// The directories are not important
@@ -85,6 +88,7 @@ func NewDirectoryIterator(bucket, dir string) s3manager.BatchUploadIterator {
 	return &DirectoryIterator{
 		filePaths: paths,
 		bucket:    bucket,
+		objType:   objType,
 	}
 }
 
@@ -117,7 +121,7 @@ func (iter *DirectoryIterator) Err() error {
 func (iter *DirectoryIterator) UploadObject() s3manager.BatchUploadObject {
 	f := iter.next.f
 	fileName := filepath.Base(f.Name())
-	newPath := "/img/" + fileName
+	newPath := fmt.Sprintf("/%s/", iter.objType) + fileName
 	return s3manager.BatchUploadObject{
 		Object: &s3manager.UploadInput{
 			Bucket: &iter.bucket,
@@ -130,8 +134,8 @@ func (iter *DirectoryIterator) UploadObject() s3manager.BatchUploadObject {
 	}
 }
 
-func errorFormated(errorMessage error, c *fiber.Ctx) error {
-	c.SendString(fmt.Sprintf("You receveid the following error: %s", errorMessage.Error()))
+func errorFormated(errorMessage string, c *fiber.Ctx) error {
+	c.SendString(fmt.Sprintf("You receveid the following error: %s", errorMessage))
 	return c.SendStatus(500)
 }
 
@@ -158,10 +162,9 @@ func main() {
 		id := uuid.New()
 
 		// Receives all the header + file
-
 		fileFromPost, err := c.FormFile("File")
 		if err != nil {
-			return errorFormated(err, c)
+			return errorFormated("E000001", c)
 		}
 
 		fileName := fileFromPost.Filename
@@ -170,44 +173,36 @@ func main() {
 
 		// Check if the file is a zip file
 		if filepath.Ext(fileName) != ".zip" {
-			c.SendString("Wrong file format!")
-			return c.SendStatus(500)
+			errorFormated("E000003", c)
 		}
 
 		// Normal flag is the usual branch the file follows, if it's a duplicate the front end will be notified, and a new branch will activate.
 
 		if choiceFlag == "normal" {
 
-			// Check if the file is a zip file
-			if filepath.Ext(fileName) != ".zip" {
-				c.SendString("Wrong file format!")
-				return c.SendStatus(500)
-
-			}
-
 			multiPartfile, err := fileFromPost.Open()
 			if err != nil {
-				return errorFormated(err, c)
+				return errorFormated("E000002", c)
 			}
 
 			defer multiPartfile.Close()
 
-			encryptedFile, err := ioutil.ReadAll(multiPartfile)
+			encryptedFile, err := io.ReadAll(multiPartfile)
 			if err != nil {
-				return errorFormated(err, c)
+				return errorFormated("E000004", c)
 			}
 
 			// Key 32 bytes length
 			key, _ := ioutil.ReadFile("RandomNumbers")
 			block, err := aes.NewCipher(key)
 			if err != nil {
-				return errorFormated(err, c)
+				return errorFormated("E000005", c)
 			}
 			// We are going to use the GCM mode, which is a stream mode with authentication.
 			// So we don’t have to worry about the padding or doing the authentication, since it is already done by the package.
 			gcm, err := cipher.NewGCM(block)
 			if err != nil {
-				return errorFormated(err, c)
+				return errorFormated("E000006", c)
 			}
 			// This mode requires a nonce array. It works like an IV.
 			// Make sure this is never the same value, that is, change it every time you will encrypt, even if it is the same file.
@@ -215,7 +210,7 @@ func main() {
 			// Never use more than 2^32 random nonces with a given key because of the risk of repeat.
 			nonce := make([]byte, gcm.NonceSize())
 			if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
-				return errorFormated(err, c)
+				return errorFormated("E000007", c)
 			}
 
 			// Removing the nonce
@@ -223,22 +218,46 @@ func main() {
 			encryptedFile = encryptedFile[gcm.NonceSize():]
 			decryptedFile, err := gcm.Open(nil, nonce2, encryptedFile, nil)
 			if err != nil {
-				return errorFormated(err, c)
+				return errorFormated("E000008", c)
 			}
 			err = ioutil.WriteFile(fileName, decryptedFile, 0777)
 			if err != nil {
-				return errorFormated(err, c)
+				return errorFormated("E000009", c)
 			}
 			file, err := os.Open(fileName)
 			if err != nil {
-				return errorFormated(err, c)
+				return errorFormated("E000010", c)
 			}
 
 			// Unzip to temp folder?
 			dst := "output"
 			archive, err := zip.OpenReader(fileFromPost.Filename)
 			if err != nil {
-				return errorFormated(err, c)
+				return errorFormated("E000011", c)
+			}
+
+			imgFolderExists := false
+			psfFolderExists := false
+
+			for _, f := range archive.File {
+				if f.FileInfo().Name() == "img" {
+					imgFolderExists = true
+				}
+				if f.FileInfo().Name() == "psf" {
+					psfFolderExists = true
+				}
+
+			}
+
+			if !imgFolderExists || !psfFolderExists {
+				archive.Close()
+				file.Close()
+				err = os.Remove("./" + fileName)
+				if err != nil {
+					return errorFormated("E000012", c)
+				}
+				c.SendString("E000013")
+				return c.SendStatus(500)
 			}
 
 			for _, f := range archive.File {
@@ -255,21 +274,21 @@ func main() {
 					continue
 				}
 				if err := os.MkdirAll(filepath.Dir(filePath), os.ModePerm); err != nil {
-					panic(err)
+					return errorFormated("E000014", c)
 				}
 
 				dstFile, err := os.OpenFile(filePath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, f.Mode())
 				if err != nil {
-					return errorFormated(err, c)
+					return errorFormated("E000015", c)
 				}
 
 				fileInArchive, err := f.Open()
 				if err != nil {
-					return errorFormated(err, c)
+					return errorFormated("E000016", c)
 				}
 
 				if _, err := io.Copy(dstFile, fileInArchive); err != nil {
-					return errorFormated(err, c)
+					return errorFormated("E000017", c)
 				}
 				dstFile.Close()
 				fileInArchive.Close()
@@ -280,28 +299,43 @@ func main() {
 
 			// Rename img folder file names
 			imgBaseDir := "./output/" + fileNameOnly + "/img/"
-			dir, err := os.ReadDir(imgBaseDir)
+			imgDir, err := os.ReadDir(imgBaseDir)
 			if err != nil {
-				return errorFormated(err, c)
+				return errorFormated("E000018", c)
 			}
-			for i := range dir {
-				singleImageCurrentDir := imgBaseDir + dir[i].Name()
-				singleImageNewDir := imgBaseDir + id.String() + dir[i].Name()
+			for i := range imgDir {
+				singleImageCurrentDir := imgBaseDir + imgDir[i].Name()
+				singleImageNewDir := imgBaseDir + id.String() + imgDir[i].Name()
 				err = os.Rename(singleImageCurrentDir, singleImageNewDir)
 				if err != nil {
-					fmt.Println(err)
+					return errorFormated("E000019", c)
+				}
+			}
+
+			// Rename psf folder file names
+			psfBaseDir := "./output/" + fileNameOnly + "/psf/"
+			psfDir, err := os.ReadDir(psfBaseDir)
+			if err != nil {
+				return errorFormated("E000020", c)
+			}
+			for i := range psfDir {
+				singlePsfCurrentDir := psfBaseDir + psfDir[i].Name()
+				singlePsfNewDir := psfBaseDir + id.String() + psfDir[i].Name()
+				err = os.Rename(singlePsfCurrentDir, singlePsfNewDir)
+				if err != nil {
+					return errorFormated("E000021", c)
 				}
 			}
 
 			// Eliminate the zip file
 			err = os.Remove("./" + fileName)
 			if err != nil {
-				return errorFormated(err, c)
+				return errorFormated("E000012", c)
 			}
 
 			JSONDir, err := os.ReadDir("./output/" + fileNameOnly)
 			if err != nil {
-				return errorFormated(err, c)
+				return errorFormated("E000022", c)
 			}
 			var JSONFile string
 			for _, JSONDirFile := range JSONDir {
@@ -314,13 +348,13 @@ func main() {
 			pathToJson := filepath.Join(fileNameOnly, JSONFile)
 			byteValue, err := ioutil.ReadFile("./output/" + pathToJson)
 			if err != nil {
-				return errorFormated(err, c)
+				return errorFormated("E000023", c)
 			}
 
 			var result []JSONData
 			err = json.Unmarshal(byteValue, &result)
 			if err != nil {
-				return errorFormated(err, c)
+				return errorFormated("E000024", c)
 			}
 
 			// Updates certain properties of the JSON file
@@ -332,6 +366,8 @@ func main() {
 				for iImages := range result[iStruct].Image_file_names {
 					result[iStruct].Image_file_names[iImages] = id.String() + result[iStruct].Image_file_names[iImages]
 				}
+				result[iStruct].Psf_file_name = id.String() + result[iStruct].Psf_file_name
+				result[iStruct].User = "dmelim@unevis.de"
 			}
 
 			// Connect to database
@@ -343,7 +379,7 @@ func main() {
 
 			client, err := mongo.Connect(context.TODO(), clientOptions)
 			if err != nil {
-				return errorFormated(err, c)
+				return errorFormated("E000025", c)
 			}
 
 			// get collection as ref, the name of the database, then the name of the collection
@@ -357,16 +393,16 @@ func main() {
 				if err == mongo.ErrNoDocuments {
 					fmt.Println("Clear")
 				}
-				return errorFormated(err, c)
+				return errorFormated("E000026", c)
 			}
 			var results []JSONData
 			if err = cursor.All(context.TODO(), &results); err != nil {
-				return errorFormated(err, c)
+				return errorFormated("E000027", c)
 			}
 			if len(results) > 0 {
 				err = os.RemoveAll("./output")
 				if err != nil {
-					return errorFormated(err, c)
+					return errorFormated("E000028", c)
 				}
 				return c.SendString("File already exists!")
 			}
@@ -379,7 +415,7 @@ func main() {
 
 			_, err = collection.InsertMany(context.TODO(), newResults)
 			if err != nil {
-				return errorFormated(err, c)
+				return errorFormated("E000029", c)
 			}
 
 			// Initialize a session.
@@ -390,25 +426,36 @@ func main() {
 				},
 			})
 			if err != nil {
-				return errorFormated(err, c)
+				return errorFormated("E000030", c)
 			}
 			s3Bucket := os.Getenv("S3_BUCKET")
 
-			// Initialize variables to upload to bucket
+			// Initialize variables and upload images
 
 			path := "./output/" + fileNameOnly + "/img"
-			iter := NewDirectoryIterator(s3Bucket, path)
+			iter := NewDirectoryIterator(s3Bucket, path, "img")
 			uploader := s3manager.NewUploader(sess)
 
-			// Upload to Bucket
 			if err := uploader.UploadWithIterator(aws.BackgroundContext(), iter); err != nil {
-				return errorFormated(err, c)
+				return errorFormated("E000031", c)
 			}
 			fmt.Printf("Successfully uploaded %q to %q", path, s3Bucket)
+
+			// Initialize variables and upload psf
+
+			path = "./output/" + fileNameOnly + "/psf"
+			iter = NewDirectoryIterator(s3Bucket, path, "psf")
+			uploader = s3manager.NewUploader(sess)
+
+			if err := uploader.UploadWithIterator(aws.BackgroundContext(), iter); err != nil {
+				return errorFormated("E000032", c)
+			}
+			fmt.Printf("Successfully uploaded %q to %q", path, s3Bucket)
+
 			// Delete the created files
 			err = os.RemoveAll("./output")
 			if err != nil {
-				return errorFormated(err, c)
+				return errorFormated("E000028", c)
 			}
 
 			// Create a new instance of Message
@@ -420,7 +467,7 @@ func main() {
 			// Marshal it into JSON prior to requesting
 			messageJSON, err := json.Marshal(message)
 			if err != nil {
-				return errorFormated(err, c)
+				return errorFormated("E000033", c)
 			}
 			pythonServerURL := os.Getenv("PYTHON_SERVER_URL")
 
@@ -428,7 +475,7 @@ func main() {
 			_, err = http.Post(pythonServerURL, "application/json",
 				bytes.NewBuffer(messageJSON))
 			if err != nil {
-				return errorFormated(err, c)
+				return errorFormated("E000034", c)
 			}
 
 			return c.SendString("Finished")
@@ -437,6 +484,7 @@ func main() {
 			c.SendString("New Version")
 
 		}
+
 		return c.SendStatus(500)
 	})
 
