@@ -59,16 +59,30 @@ def AnnoyIndexer():
     objs = bucket.objects.all()
 
     # Init MongoDB
-    myclient = pymongo.MongoClient("mongodb://mongo:FBbvQCE8X6T4wwqSpMvB@containers-us-west-107.railway.app:7638")
+    mongoURI = os.getenv("MONGODB_URI")
+    myclient = pymongo.MongoClient(mongoURI)
     mydb = myclient["test"]
     mycol = mydb["JSONInfo"]
-    myquery = {"vendor": vendor}
 
-    mydoc = mycol.find(myquery)
-    temp = []
 
     # Check MongoDB to see if the JSON files have a PSF File
 
+    mypsfquery = {"psf_file_name"}
+
+    mydoc = mycol.find(mypsfquery)
+
+    print(mydoc)
+
+    '''
+    # Check for a specific vendor
+
+    
+    myvendorquery = {"vendor": vendor}
+
+    mydoc = mycol.find(myvendorquery)
+    temp = []
+
+    
     for x in mydoc:
         temp += x['image_file_names']
     featureFiles = ["featuremap/" + obj.rsplit('.', 1)[0] + ".bin" for obj in temp]
@@ -93,6 +107,6 @@ def AnnoyIndexer():
         df['features'] = arrayParts
         indexer.start_indexing(df, "C:\Projects\solid_prediction\FeatureMapMicroservice", vendor)
         
-        # Send the annoy indexer to AWS
+        # Send the annoy indexer to AWS'''
 
     return "Received"

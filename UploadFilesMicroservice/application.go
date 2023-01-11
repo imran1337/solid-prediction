@@ -373,7 +373,8 @@ func main() {
 			// Connect to database
 			// Set client options, the string is the connection to the mongo uri
 			mongoDBURI := os.Getenv("MONGODB_URI")
-			clientOptions := options.Client().ApplyURI(mongoDBURI)
+			serverAPIOptions := options.ServerAPI(options.ServerAPIVersion1)
+			clientOptions := options.Client().ApplyURI(mongoDBURI).SetServerAPIOptions(serverAPIOptions)
 
 			// Connect to MongoDB
 
