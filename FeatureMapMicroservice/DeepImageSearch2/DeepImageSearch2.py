@@ -122,7 +122,6 @@ class Index:
             t.add_item(i, v)
             #print(t, i, v)
         t.build(100) # 100 trees
-        print(os.path.join(indexerPath, vendor + '_fvecs.ann'))
         t.save(os.path.join(indexerPath, vendor + '_fvecs.ann'))
 
 class SearchImage:
