@@ -91,18 +91,23 @@ def AnnoyIndexer():
     # Get the feature maps of the specific images
     featureFiles = ["featuremap/" + obj.rsplit('.', 1)[0] + ".bin" for obj in temp]
     arrayParts = []
+    idx = 0
     for featureFile in featureFiles:
          # Check if the object exists or if we need to error handle it
         try:
             awsImage = s3.Object(bucketName, featureFile) 
-            print(awsImage)
+            #print(awsImage)
         except ClientError:
             print(featureFile)
             continue
         # Append images to an array. And buffer them. 
         awsImageBytes = awsImage.get()['Body'].read()
 
-        arrayParts.append(numpy.frombuffer(awsImageBytes, dtype=numpy.float32))
+        arrNumpy = numpy.frombuffer(awsImageBytes, dtype=numpy.float32)
+        arrayParts.append(arrNumpy)
+        if idx == 0:
+            imagesDict['length'] = len(arrNumpy)
+            idx += 1
 
     # Create a dataframe and create the indexer
     df = pandas.DataFrame()
