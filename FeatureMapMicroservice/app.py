@@ -20,7 +20,7 @@ load_dotenv()
 def CleanUpFiles(filepath):
         os.remove(filepath)
 
-@app.route("/FeatureMapMicroservice", methods=['POST'])
+@app.route("/feature-map-microservice", methods=['POST'])
 def FeatureMapMicroservice():
     content = request.json
     print(content)
@@ -50,7 +50,7 @@ def FeatureMapMicroservice():
         #idx += 1
     
     return "Received"
-@app.route("/AnnoyIndexer", methods=['POST'])
+@app.route("/annoy-indexer", methods=['GET'])
 def AnnoyIndexer():
     currentPath = current_app.root_path
     test = os.listdir(currentPath)
@@ -136,6 +136,13 @@ def AnnoyIndexer():
     os.rmdir(downloadTotalPath)
     
     return send_file(zipLocation, as_attachment=True)
+
+@app.route("/find-matching-part", methods=['POST'])
+def FindMatchingPart():
+    content = request.json
+    print(content)
+
+
 
 if __name__ == '__main__':
     app.run(debug=True, threaded=True, port=5001)
