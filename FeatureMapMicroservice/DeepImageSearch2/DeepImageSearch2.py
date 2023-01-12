@@ -113,7 +113,6 @@ class Index:
         # print(image_data.to_string())
 
     def start_indexing(self, image_data, indexerPath, vendor):
-        indexerPath = os.path.join(indexerPath, 'annoy_indexer')
         if not os.path.exists(indexerPath):
             os.makedirs(indexerPath)
 
@@ -144,16 +143,12 @@ class SearchImage:
 
         self.indexVendorPath = indexerPath
 
-        #self.imageData = [obj['features'] for obj in parts]
         lvi = 0
         for obj in parts:
             if lvi == 0:
                 self.features = len(np.fromstring(obj.features, dtype=np.float32))
                 lvi += 1
             self.imageData.append(obj.imagefilename)
-
-        #self.image_data = pd.read_sql('image_features', self.sqlEngine)
-        #self.f = len(self.image_data['features'][0])
 
     def search_by_vector(self, v, n:int):
         self.v = v # Feature Vector

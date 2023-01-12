@@ -10,7 +10,7 @@ import numpy
 import pymongo
 import pandas
 import json
-import shutil
+import zipfile
 import uuid
 
 app = Flask(__name__)
@@ -112,30 +112,34 @@ def AnnoyIndexer():
     # Create a dataframe and create the indexer
     df = pandas.DataFrame()
     df['features'] = arrayParts
-    
-    downloadLocation = os.getenv("DOWNLOAD_PATH")
+
+    downloadLocation = os.path.dirname(__file__)
+    if getattr(sys, 'frozen', False):
+        downloadLocation = os.path.dirname(sys.executable)
+    downloadLocation += '/DownloadFiles'
     downloadTotalPath = os.path.join(currentPath, downloadLocation, generatedUUID)
     indexer.start_indexing(df, downloadTotalPath, vendor)
     indexerPath = os.path.join(downloadTotalPath, vendor + '_fvecs.ann')
 
     # Create JSON File
     json_object = json.dumps(imagesDict, indent=4)
-    jsonPath = os.path.join(downloadLocation, "info.json")
+    jsonPath = os.path.join(downloadTotalPath, "info.json")
 
     with open(jsonPath, "w") as outfile:
         outfile.write(json_object)
 
     # Download Both 
     # ZIp files
-    shutil.make_archive(generatedUUID, "zip", downloadTotalPath)
-    zipLocation = os.path.join(currentPath, generatedUUID + ".zip")
+    zipLocation = os.path.join(downloadTotalPath, generatedUUID + ".zip")
+    with zipfile.ZipFile(zipLocation, 'w', zipfile.ZIP_DEFLATED) as zipObj:
+        zipObj.write(jsonPath, os.path.basename(jsonPath))
+        zipObj.write(indexerPath, os.path.basename(indexerPath))
+
     # Cleanup files
-    
     os.remove(jsonPath)
     os.remove(indexerPath)
-    os.rmdir(os.path.join(downloadTotalPath, 'annoy_indexer'))
-    os.rmdir(downloadTotalPath)
-    
+    # TODO: Build a function that cleans up the whole directory after a day
+
     return send_file(zipLocation, as_attachment=True)
 
 @app.route("/find-matching-part", methods=['POST'])
