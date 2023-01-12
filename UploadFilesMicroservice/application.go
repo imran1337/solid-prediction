@@ -30,28 +30,29 @@ import (
 )
 
 type JSONData struct {
+	Category            string
 	File_name           string
-	Vtx_devn_ratio      float32
-	Pointcount          int
-	Facecount           int
-	Vertexcount         int
-	Bbox_diagonal       float32
-	Polyisland_count    int
-	Edge_len_avg        float32
-	Material_count      int32
-	Material_names      []string
-	Image_file_names    []string
 	Tri_ratio_median    float32
+	Rating              int8
 	Conn_avg            float32
+	Rating_raw          float32
 	Min_offset          float32
 	Offset_ratio        float32
 	Surface_area        float32
+	Vertexcount         int
+	Bbox_diagonal       float32
+	Edge_len_avg        float32
 	Max_offset          float32
 	Border_ratio        float32
+	Vtx_devn_ratio      float32
 	Tri_ratio_avg       float32
 	Curvature_avg       float32
-	Rating_raw          float32
-	Rating              int8
+	Polyisland_count    int
+	Facecount           int
+	Pointcount          int
+	Material_count      int32
+	Material_names      []string
+	Image_file_names    []string
 	Psf_file_name       string
 	Universal_uuid      string
 	Parent_Package_Name string
