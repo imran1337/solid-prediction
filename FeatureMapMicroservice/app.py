@@ -116,11 +116,12 @@ def AnnoyIndexer():
     downloadLocation = os.getenv("DOWNLOAD_PATH")
     downloadTotalPath = os.path.join(currentPath, downloadLocation, generatedUUID)
     indexer.start_indexing(df, downloadTotalPath, vendor)
-    indexerPath = os.path.join(downloadTotalPath, 'annoy_indexer', vendor + '_fvecs.ann')
+    indexerPath = os.path.join(downloadTotalPath, vendor + '_fvecs.ann')
 
     # Create JSON File
     json_object = json.dumps(imagesDict, indent=4)
-    jsonPath = os.path.join(downloadTotalPath, "images_file_names.json")
+    jsonPath = os.path.join(downloadLocation, "info.json")
+
     with open(jsonPath, "w") as outfile:
         outfile.write(json_object)
 
