@@ -79,7 +79,6 @@ def AnnoyIndexer():
 
     imagesDict = {"image_file_names": temp}
 
-    
     # Get the feature maps of the specific images
     featureFiles = ["featuremap/" + obj.rsplit('.', 1)[0] + ".bin" for obj in temp]
     arrayParts = []
@@ -120,8 +119,8 @@ def AnnoyIndexer():
     os.remove(indexerPath)
     os.rmdir(os.path.join(annoyTotalPath, 'annoy_indexer'))
     os.rmdir(annoyTotalPath)
-
-    
     
     return send_file(zipLocation, as_attachment=True)
-    
+
+if __name__ == '__main__':
+    app.run(debug=True, threaded=True, port=5001)

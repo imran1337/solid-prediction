@@ -1,20 +1,8 @@
 import numpy
-from sqlalchemy_utils import database_exists, create_database
-from sqlalchemy import (
-    create_engine,
-    MetaData,
-    Table,
-    Column,
-    Integer,
-    String,
-    BLOB
-)
-
 import os
 import json
 import io
 import pandas as pd
-import matplotlib.pyplot as plt
 from PIL import Image
 from tqdm import tqdm
 import numpy as np
@@ -89,13 +77,13 @@ class Index:
 
     sqlEngine = None
 
-    metaData = None
+    #metaData = None
 
     #TODO: This needs to be changed when hosted on a cloud space
     indexBasePath = None
 
     def __init__(self):
-        self.metaData = MetaData()
+        #self.metaData = MetaData()
         self.FE = FeatureExtractor()
 
     def extract_single_feature(self, imgPath, isBytes):

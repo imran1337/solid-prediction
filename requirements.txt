@@ -1,0 +1,10 @@
+flask
+python-dotenv
+boto3
+numpy
+pymongo
+pandas
+Pillow
+tqdm
+annoy
+tensorflow
