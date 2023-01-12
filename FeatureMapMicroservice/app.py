@@ -11,6 +11,7 @@ import pymongo
 import pandas
 import json
 import shutil
+import uuid
 
 app = Flask(__name__)
 
@@ -51,6 +52,14 @@ def FeatureMapMicroservice():
     return "Received"
 @app.route("/AnnoyIndexer", methods=['POST'])
 def AnnoyIndexer():
+    currentPath = current_app.root_path
+    test = os.listdir(currentPath)
+
+    for item in test:
+        if item.endswith(".zip"):
+            os.remove(os.path.join(currentPath, item))
+
+    generatedUUID = str(uuid.uuid4())   
     
     indexer = Index()
 
@@ -98,27 +107,28 @@ def AnnoyIndexer():
     # Create a dataframe and create the indexer
     df = pandas.DataFrame()
     df['features'] = arrayParts
-    currentPath = current_app.root_path
+    
     downloadLocation = os.getenv("DOWNLOAD_PATH")
-    annoyTotalPath = os.path.join(currentPath, downloadLocation)
-    indexer.start_indexing(df, annoyTotalPath, vendor)
-    indexerPath = os.path.join(annoyTotalPath, 'annoy_indexer', vendor + '_fvecs.ann')
+    downloadTotalPath = os.path.join(currentPath, downloadLocation, generatedUUID)
+    indexer.start_indexing(df, downloadTotalPath, vendor)
+    indexerPath = os.path.join(downloadTotalPath, 'annoy_indexer', vendor + '_fvecs.ann')
 
     # Create JSON File
     json_object = json.dumps(imagesDict, indent=4)
-    jsonPath = os.path.join(currentPath, downloadLocation, "images_file_names.json")
+    jsonPath = os.path.join(downloadTotalPath, "images_file_names.json")
     with open(jsonPath, "w") as outfile:
         outfile.write(json_object)
 
     # Download Both 
     # ZIp files
-    shutil.make_archive("Files", "zip", annoyTotalPath)
-    zipLocation = os.path.join(currentPath, "Files.zip")
+    shutil.make_archive(generatedUUID, "zip", downloadTotalPath)
+    zipLocation = os.path.join(currentPath, generatedUUID + ".zip")
     # Cleanup files
+    
     os.remove(jsonPath)
     os.remove(indexerPath)
-    os.rmdir(os.path.join(annoyTotalPath, 'annoy_indexer'))
-    os.rmdir(annoyTotalPath)
+    os.rmdir(os.path.join(downloadTotalPath, 'annoy_indexer'))
+    os.rmdir(downloadTotalPath)
     
     return send_file(zipLocation, as_attachment=True)
 

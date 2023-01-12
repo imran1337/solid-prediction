@@ -182,4 +182,4 @@ cython_debug/
 FeatureMapMicroservice/featureMap
 FeatureMapMicroservice/testImages
 FeatureMapMicroservice/annoy_indexer
-FeatureMapMicroservice/Files.zip
+FeatureMapMicroservice/*.zip
