@@ -1,5 +1,5 @@
 import sys
-from flask import Flask, request, jsonify
+from flask import Flask, request, current_app, send_file
 from DeepImageSearch2.DeepImageSearch2 import Index, SearchImage
 import boto3
 from botocore.exceptions import ClientError
@@ -9,16 +9,20 @@ import io
 import numpy
 import pymongo
 import pandas
+import json
+import shutil
 
 app = Flask(__name__)
 
 load_dotenv()
 
+def CleanUpFiles(filepath):
+        os.remove(filepath)
+
 @app.route("/FeatureMapMicroservice", methods=['POST'])
 def FeatureMapMicroservice():
     content = request.json
     print(content)
-    imgPath = "testImages/_000.019.906.J__TM__001_---_KiSi_G2-3_15bis36kg_ISOFIT._ppH.fbx.backView.png"
     s3 = boto3.resource('s3')
     s3Client = boto3.client('s3')
     bucketName = os.getenv("S3_BUCKET")
@@ -47,7 +51,7 @@ def FeatureMapMicroservice():
     return "Received"
 @app.route("/AnnoyIndexer", methods=['POST'])
 def AnnoyIndexer():
-
+    
     indexer = Index()
 
     vendor = "Volkswagen"
@@ -63,50 +67,61 @@ def AnnoyIndexer():
     myclient = pymongo.MongoClient(mongoURI)
     mydb = myclient["test"]
     mycol = mydb["JSONInfo"]
-
+    temp = []
 
     # Check MongoDB to see if the JSON files have a PSF File
 
-    mypsfquery = {"psf_file_name"}
+    mypsfquery = {"psf_file_name": {"$exists": True}, "vendor":vendor}
+    mydoc = mycol.find(mypsfquery, {"image_file_names": 1})
 
-    mydoc = mycol.find(mypsfquery)
-
-    print(mydoc)
-
-    '''
-    # Check for a specific vendor
-
-    
-    myvendorquery = {"vendor": vendor}
-
-    mydoc = mycol.find(myvendorquery)
-    temp = []
-
-    
     for x in mydoc:
-        temp += x['image_file_names']
+        temp += x["image_file_names"]
+
+    imagesDict = {"image_file_names": temp}
+
+    
+    # Get the feature maps of the specific images
     featureFiles = ["featuremap/" + obj.rsplit('.', 1)[0] + ".bin" for obj in temp]
     arrayParts = []
     for featureFile in featureFiles:
-
+         # Check if the object exists or if we need to error handle it
         try:
             awsImage = s3.Object(bucketName, featureFile) 
             print(awsImage)
         except ClientError:
             print(featureFile)
             continue
-        
-        # Check if the object exists or if we need to error handle it
-
+        # Append images to an array. And buffer them. 
         awsImageBytes = awsImage.get()['Body'].read()
 
-        # Preparing for Indexing and getting the annoy indexer
         arrayParts.append(numpy.frombuffer(awsImageBytes, dtype=numpy.float32))
-        #print(arrayParts)
-        df = pandas.DataFrame()
-        df['features'] = arrayParts
-        indexer.start_indexing(df, "C:\Projects\solid_prediction\FeatureMapMicroservice", vendor)
-        
-        # Send the annoy indexer to AWS'''
 
-    return "Received"
+    # Create a dataframe and create the indexer
+    df = pandas.DataFrame()
+    df['features'] = arrayParts
+    currentPath = current_app.root_path
+    downloadLocation = os.getenv("DOWNLOAD_PATH")
+    annoyTotalPath = os.path.join(currentPath, downloadLocation)
+    indexer.start_indexing(df, annoyTotalPath, vendor)
+    indexerPath = os.path.join(annoyTotalPath, 'annoy_indexer', vendor + '_fvecs.ann')
+
+    # Create JSON File
+    json_object = json.dumps(imagesDict, indent=4)
+    jsonPath = os.path.join(currentPath, downloadLocation, "images_file_names.json")
+    with open(jsonPath, "w") as outfile:
+        outfile.write(json_object)
+
+    # Download Both 
+    # ZIp files
+    shutil.make_archive("Files", "zip", annoyTotalPath)
+    zipLocation = os.path.join(currentPath, "Files.zip")
+    # Cleanup files
+    os.remove(jsonPath)
+    os.remove(indexerPath)
+    os.rmdir(os.path.join(annoyTotalPath, 'annoy_indexer'))
+    os.rmdir(annoyTotalPath)
+
+    
+    
+    return send_file(zipLocation, as_attachment=True)
+    
