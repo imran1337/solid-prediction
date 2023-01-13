@@ -82,13 +82,12 @@ def AnnoyIndexer():
 
     mypsfquery = {"psf_file_name": {"$exists": True}, "vendor":vendor}
 
-    
-    # TODO Check to see what happens when nothing is found
-
     mydoc = mycol.find(mypsfquery, {"image_file_names": 1})
 
     for x in mydoc:
         temp += x["image_file_names"]
+    if len(temp) == 0:
+        return "Not Acceptable", 406
 
     imagesDict = {"image_file_names": temp}
 
