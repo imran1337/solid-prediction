@@ -33,7 +33,7 @@ type JSONData struct {
 	Category            string
 	File_name           string
 	Tri_ratio_median    float32
-	Rating              int8
+	Rating_0_10         int8
 	Conn_avg            float32
 	Rating_raw          float32
 	Min_offset          float32
@@ -141,7 +141,7 @@ func errorFormated(errorMessage string, c *fiber.Ctx) error {
 }
 
 func main() {
-	prod := false
+	prod := true
 
 	if !prod {
 		err := godotenv.Load()
