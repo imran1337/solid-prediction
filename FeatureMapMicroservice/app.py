@@ -154,21 +154,12 @@ def FindMatchingPart():
     myclient = pymongo.MongoClient(mongoURI)
     mydb = myclient["test"]
     mycol = mydb["JSONInfo"]
+    
+    # FInds an object using an array. The "in" keyword is used to search for the array values. It doesn't return duplicates. 
+    result = mycol.find({"image_file_names": {"$in":content["data"]}}, {"_id":0})
+    listToReturn = [x for x in result]
 
-    objectIdMongo = []
-
-    for x in content["data"]:
-        mydoc = mycol.distinct("_id", {"image_file_names":x})
-        if mydoc in objectIdMongo:
-            continue
-        else:
-            objectIdMongo.append(mydoc)
-    listToReturn = []
-    for x in objectIdMongo:
-        fullMongoObjects = mycol.find_one({"_id":x[0]})
-        listToReturn.append(fullMongoObjects)
-
-    return listToReturn
+    return json.dumps(listToReturn)
 
 
 
