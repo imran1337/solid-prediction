@@ -39,15 +39,12 @@ def FeatureMapMicroservice():
     s3Client = boto3.client('s3')
     bucketName = os.getenv("S3_BUCKET")
 
-    awsImageBytesList = []
-
     # Gets the information in bytes. I can download the picture, maybe working with bytes is faster?
     indexer = Index()
 
     bucket = s3.Bucket(bucketName)
     objs = bucket.objects.filter(Prefix="img/" + content['UUID'])
 
-    # idx=0
     for obj in objs:
         awsImageBytes = obj.get()['Body'].read()
         print("Aws Image Bytes to Feature Start:")
@@ -58,17 +55,12 @@ def FeatureMapMicroservice():
         s3Client.upload_fileobj(io.BytesIO(
             awsImageBytesFeatures.tobytes()), bucketName, fileName)
 
-        # For testing purposes
-        # if idx >= 5:
-        #   break
-        # idx += 1
-
     return "Received"
 
 
 @app.route("/annoy-indexer", methods=['GET'])
 def AnnoyIndexer():
-
+    content = request.json
     currentPath = current_app.root_path
     test = os.listdir(currentPath)
 
@@ -170,6 +162,21 @@ def FindMatchingPart():
     listToReturn = [x for x in result]
 
     return json.dumps(listToReturn)
+
+
+@app.route("/get-psf-file", methods=['POST'])
+def GetPsfFile():
+    content = request.json
+    requestPsfFile = content["data"]
+    requestPsfFileKey = "psf/" + requestPsfFile
+
+    s3 = boto3.resource('s3')
+    bucketName = os.getenv("S3_BUCKET")
+    awsPsfFile = s3.Object(bucketName, requestPsfFileKey)
+    print(awsPsfFile)
+    awsPsfBytes = awsPsfFile.get()['Body'].read()
+
+    return awsPsfBytes
 
 
 if __name__ == '__main__':
