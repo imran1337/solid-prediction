@@ -81,6 +81,10 @@ def AnnoyIndexer():
     # Check MongoDB to see if the JSON files have a PSF File
 
     mypsfquery = {"psf_file_name": {"$exists": True}, "vendor":vendor}
+
+    
+    # TODO Check to see what happens when nothing is found
+
     mydoc = mycol.find(mypsfquery, {"image_file_names": 1})
 
     for x in mydoc:
@@ -145,7 +149,26 @@ def AnnoyIndexer():
 @app.route("/find-matching-part", methods=['POST'])
 def FindMatchingPart():
     content = request.json
-    print(content)
+    #print(content)
+    mongoURI = os.getenv("MONGODB_URI")
+    myclient = pymongo.MongoClient(mongoURI)
+    mydb = myclient["test"]
+    mycol = mydb["JSONInfo"]
+
+    objectIdMongo = []
+
+    for x in content["data"]:
+        mydoc = mycol.distinct("_id", {"image_file_names":x})
+        if mydoc in objectIdMongo:
+            continue
+        else:
+            objectIdMongo.append(mydoc)
+    listToReturn = []
+    for x in objectIdMongo:
+        fullMongoObjects = mycol.find_one({"_id":x[0]})
+        listToReturn.append(fullMongoObjects)
+
+    return listToReturn
 
 
 
