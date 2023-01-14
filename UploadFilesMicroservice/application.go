@@ -16,6 +16,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/session"
@@ -141,7 +142,7 @@ func errorFormated(errorMessage string, c *fiber.Ctx) error {
 }
 
 func main() {
-	prod := true
+	prod := false
 
 	if !prod {
 		err := godotenv.Load()
@@ -150,7 +151,9 @@ func main() {
 		}
 	}
 
-	app := fiber.New()
+	app := fiber.New(fiber.Config{
+		BodyLimit: 1000 * 1024 * 1024, // this is the default limit of 4MB
+	})
 	// To allow cross origin, only for local development
 	app.Use(cors.New(cors.Config{
 		AllowOrigins: "http://localhost:3000",
@@ -377,11 +380,15 @@ func main() {
 			serverAPIOptions := options.ServerAPI(options.ServerAPIVersion1)
 			clientOptions := options.Client().ApplyURI(mongoDBURI).SetServerAPIOptions(serverAPIOptions)
 
-			// Connect to MongoDB
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
 
-			client, err := mongo.Connect(context.TODO(), clientOptions)
+			// Connect to MongoDB
+			client, err := mongo.Connect(ctx, clientOptions)
+			//client, err := mongo.Connect(context.TODO(), clientOptions)
 			if err != nil {
-				return errorFormated("E000025", c)
+				fmt.Println(err)
+				//return errorFormated("E000025", c)
 			}
 
 			// get collection as ref, the name of the database, then the name of the collection
