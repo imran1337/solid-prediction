@@ -183,3 +183,4 @@ FeatureMapMicroservice/featureMap
 FeatureMapMicroservice/testImages
 FeatureMapMicroservice/annoy_indexer
 FeatureMapMicroservice/*.zip
+FeatureMapMicroservice/requirements.txt

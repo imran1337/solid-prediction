@@ -142,7 +142,8 @@ func errorFormated(errorMessage string, c *fiber.Ctx) error {
 }
 
 func main() {
-	prod := false
+	// This needs to be changed when the server goes to production.
+	prod := true
 
 	if !prod {
 		err := godotenv.Load()
@@ -152,12 +153,14 @@ func main() {
 	}
 
 	app := fiber.New(fiber.Config{
-		BodyLimit: 1000 * 1024 * 1024, // this is the default limit of 4MB
+		BodyLimit: 200 * 1024 * 1024,
 	})
 	// To allow cross origin, only for local development
-	app.Use(cors.New(cors.Config{
-		AllowOrigins: "http://localhost:3000",
-		AllowHeaders: "Origin, Content-Type, Accept"}))
+	if !prod {
+		app.Use(cors.New(cors.Config{
+			AllowOrigins: "http://localhost:3000",
+			AllowHeaders: "Origin, Content-Type, Accept"}))
+	}
 
 	app.Post("/send/:flag", func(c *fiber.Ctx) error {
 		choiceFlag := c.Params("flag")
@@ -387,8 +390,7 @@ func main() {
 			client, err := mongo.Connect(ctx, clientOptions)
 			//client, err := mongo.Connect(context.TODO(), clientOptions)
 			if err != nil {
-				fmt.Println(err)
-				//return errorFormated("E000025", c)
+				return errorFormated("E000025", c)
 			}
 
 			// get collection as ref, the name of the database, then the name of the collection

@@ -1,4 +1,4 @@
-import sys
+# import sys
 from flask import Flask, request, current_app, send_file
 from DeepImageSearch2.DeepImageSearch2 import Index, SearchImage
 import boto3
@@ -13,9 +13,9 @@ import json
 import zipfile
 import uuid
 
-app = Flask(__name__)
+application = Flask(__name__)
 
-load_dotenv()
+# load_dotenv()
 
 
 def mongoConnect(osEnv, dbName, CollectionName):
@@ -31,7 +31,12 @@ DB_NAME = "test"
 COLLECTION_NAME = "JSONInfo"
 
 
-@app.route("/feature-map-microservice", methods=['POST'])
+@application.route("/", methods=['GET'])
+def HelloWorld():
+    return "Hello World"
+
+
+@application.route("/feature-map-microservice", methods=['POST'])
 def FeatureMapMicroservice():
     content = request.json
     print(content)
@@ -58,7 +63,7 @@ def FeatureMapMicroservice():
     return "Received"
 
 
-@app.route("/annoy-indexer", methods=['GET'])
+@application.route("/annoy-indexer", methods=['GET'])
 def AnnoyIndexer():
     content = request.json
     currentPath = current_app.root_path
@@ -151,7 +156,7 @@ def AnnoyIndexer():
     return send_file(zipLocation, as_attachment=True)
 
 
-@app.route("/find-matching-part", methods=['POST'])
+@application.route("/find-matching-part", methods=['POST'])
 def FindMatchingPart():
     content = request.json
     mycol = mongoConnect("MONGODB_URI", DB_NAME, COLLECTION_NAME)
@@ -164,7 +169,7 @@ def FindMatchingPart():
     return json.dumps(listToReturn)
 
 
-@app.route("/get-psf-file", methods=['POST'])
+@application.route("/get-psf-file", methods=['POST'])
 def GetPsfFile():
     content = request.json
     requestPsfFile = content["data"]
@@ -180,4 +185,4 @@ def GetPsfFile():
 
 
 if __name__ == '__main__':
-    app.run(debug=True, threaded=True, port=5001)
+    application.run(debug=True, threaded=True)
