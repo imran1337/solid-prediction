@@ -16,6 +16,7 @@ application = Flask(__name__)
 
 # load_dotenv()
 
+
 def mongoConnect(osEnv, dbName, CollectionName):
     mongoURI = os.getenv(osEnv)
     myclient = pymongo.MongoClient(mongoURI)
@@ -28,11 +29,13 @@ def mongoConnect(osEnv, dbName, CollectionName):
 DB_NAME = "test"
 COLLECTION_NAME = "JSONInfo"
 
+
 def start_indexing(self, image_data, indexerPath, vendor):
     if not os.path.exists(indexerPath):
         os.makedirs(indexerPath)
 
-    f = len(image_data['features'][0])  # Length of item vector that will be indexed
+    # Length of item vector that will be indexed
+    f = len(image_data['features'][0])
     t = AnnoyIndex(f, 'euclidean')
     for i, v in tqdm(zip(image_data.index, image_data['features'])):
         t.add_item(i, v)
@@ -40,16 +43,22 @@ def start_indexing(self, image_data, indexerPath, vendor):
     t.build(100)  # 100 trees
     t.save(os.path.join(indexerPath, vendor + '_fvecs.ann'))
 
+
+@application.route("/", methods=['GET'])
+def helloWorld():
+    return "Hello World"
+
+
 @application.route("/annoy-indexer", methods=['GET'])
 def AnnoyIndexer():
-    content = request.json
+    # content = request.json
     currentPath = current_app.root_path
-    test = os.listdir(currentPath)
+    # test = os.listdir(currentPath)
 
     # TODO get a better way to clean up the files
-    for item in test:
-        if item.endswith(".zip"):
-            os.remove(os.path.join(currentPath, item))
+    # for item in test:
+    #   if item.endswith(".zip"):
+    #      os.remove(os.path.join(currentPath, item))
 
     generatedUUID = str(uuid.uuid4())
 
@@ -129,6 +138,7 @@ def AnnoyIndexer():
     # TODO: Build a function that cleans up the whole directory after a day
 
     return send_file(zipLocation, as_attachment=True)
+
 
 @application.route("/find-matching-part", methods=['POST'])
 def FindMatchingPart():
