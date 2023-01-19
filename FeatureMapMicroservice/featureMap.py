@@ -7,6 +7,7 @@ from PIL import Image
 from tqdm import tqdm
 import numpy
 import os
+import io
 tf.compat.v1.logging.set_verbosity(tf.compat.v1.logging.ERROR)
 
 
