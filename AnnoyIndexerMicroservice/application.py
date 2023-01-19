@@ -1,11 +1,10 @@
 import sys
 from flask import Flask, request, current_app, send_file
-from DeepImageSearch2.DeepImageSearch2 import Index, SearchImage
 import boto3
 from botocore.exceptions import ClientError
-from dotenv import load_dotenv
+import tqdm
 import os
-import io
+from annoy import AnnoyIndex
 import numpy
 import pymongo
 import pandas
@@ -16,7 +15,6 @@ import uuid
 application = Flask(__name__)
 
 # load_dotenv()
-
 
 def mongoConnect(osEnv, dbName, CollectionName):
     mongoURI = os.getenv(osEnv)
@@ -30,38 +28,17 @@ def mongoConnect(osEnv, dbName, CollectionName):
 DB_NAME = "test"
 COLLECTION_NAME = "JSONInfo"
 
+def start_indexing(self, image_data, indexerPath, vendor):
+    if not os.path.exists(indexerPath):
+        os.makedirs(indexerPath)
 
-@application.route("/", methods=['GET'])
-def HelloWorld():
-    return "Hello World"
-
-
-@application.route("/feature-map-microservice", methods=['POST'])
-def FeatureMapMicroservice():
-    content = request.json
-    print(content)
-    s3 = boto3.resource('s3')
-    s3Client = boto3.client('s3')
-    bucketName = os.getenv("S3_BUCKET")
-
-    # Gets the information in bytes. I can download the picture, maybe working with bytes is faster?
-    indexer = Index()
-
-    bucket = s3.Bucket(bucketName)
-    objs = bucket.objects.filter(Prefix="img/" + content['UUID'])
-
-    for obj in objs:
-        awsImageBytes = obj.get()['Body'].read()
-        print("Aws Image Bytes to Feature Start:")
-        awsImageBytesFeatures = indexer.extract_single_feature(
-            awsImageBytes, True)
-        fileName = obj.key.replace(
-            "img/", "featuremap/").rsplit('.', 1)[0] + ".bin"
-        s3Client.upload_fileobj(io.BytesIO(
-            awsImageBytesFeatures.tobytes()), bucketName, fileName)
-
-    return "Received"
-
+    f = len(image_data['features'][0])  # Length of item vector that will be indexed
+    t = AnnoyIndex(f, 'euclidean')
+    for i, v in tqdm(zip(image_data.index, image_data['features'])):
+        t.add_item(i, v)
+        # print(t, i, v)
+    t.build(100)  # 100 trees
+    t.save(os.path.join(indexerPath, vendor + '_fvecs.ann'))
 
 @application.route("/annoy-indexer", methods=['GET'])
 def AnnoyIndexer():
@@ -75,8 +52,6 @@ def AnnoyIndexer():
             os.remove(os.path.join(currentPath, item))
 
     generatedUUID = str(uuid.uuid4())
-
-    indexer = Index()
 
     vendor = "Volkswagen"
 
@@ -131,7 +106,7 @@ def AnnoyIndexer():
     downloadLocation += '/DownloadFiles'
     downloadTotalPath = os.path.join(
         currentPath, downloadLocation, generatedUUID)
-    indexer.start_indexing(df, downloadTotalPath, vendor)
+    start_indexing(df, downloadTotalPath, vendor)
     indexerPath = os.path.join(downloadTotalPath, vendor + '_fvecs.ann')
 
     # Create JSON File
@@ -154,7 +129,6 @@ def AnnoyIndexer():
     # TODO: Build a function that cleans up the whole directory after a day
 
     return send_file(zipLocation, as_attachment=True)
-
 
 @application.route("/find-matching-part", methods=['POST'])
 def FindMatchingPart():
