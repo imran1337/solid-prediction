@@ -15,11 +15,6 @@ class Index:
 
     sqlEngine = None
 
-    # metaData = None
-
-    # TODO: This needs to be changed when hosted on a cloud space
-    indexBasePath = None
-
     def __init__(self):
         # self.metaData = MetaData()
         self.FE = FeatureExtractor()
