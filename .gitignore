@@ -179,8 +179,8 @@ cython_debug/
 #  option (not recommended) you can uncomment the following to ignore the entire idea folder.
 #.idea/
 
-FeatureMapMicroservice/featureMap
-FeatureMapMicroservice/testImages
-FeatureMapMicroservice/annoy_indexer
-FeatureMapMicroservice/*.zip
-FeatureMapMicroservice/requirements.txt
+*/featureMap
+*/annoy_indexer
+*/*.zip
+*/DownloadFiles
+*/env
