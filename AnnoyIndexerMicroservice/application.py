@@ -29,29 +29,29 @@ def mongoConnect(osEnv, dbName, CollectionName):
 DB_NAME = "test"
 COLLECTION_NAME = "JSONInfo"
 
-
-def start_indexing(self, image_data, indexerPath, vendor):
+def start_indexing(image_data, indexerPath, vendor):
     if not os.path.exists(indexerPath):
         os.makedirs(indexerPath)
 
     # Length of item vector that will be indexed
     f = len(image_data['features'][0])
     t = AnnoyIndex(f, 'euclidean')
-    for i, v in tqdm(zip(image_data.index, image_data['features'])):
+    for i, v in tqdm.tqdm(zip(image_data.index, image_data['features'])):
         t.add_item(i, v)
         # print(t, i, v)
     t.build(100)  # 100 trees
     t.save(os.path.join(indexerPath, vendor + '_fvecs.ann'))
 
-
 @application.route("/", methods=['GET'])
 def helloWorld():
     return "Hello World"
 
-
 @application.route("/annoy-indexer", methods=['GET'])
 def AnnoyIndexer():
-    # content = request.json
+
+    #import dotenv
+    #dotenv.load_dotenv()
+
     currentPath = current_app.root_path
     # test = os.listdir(currentPath)
 
@@ -98,12 +98,14 @@ def AnnoyIndexer():
             continue
         # Append images to an array. And buffer them.
         awsImageBytes = awsImage.get()['Body'].read()
-
         arrNumpy = numpy.frombuffer(awsImageBytes, dtype=numpy.float32)
+        print(featureFile, idx, len(featureFiles))
         arrayParts.append(arrNumpy)
         if idx == 0:
             imagesDict['length'] = len(arrNumpy)
-            idx += 1
+        idx += 1
+        if idx > 100:
+            break
 
     # Create a dataframe and create the indexer
     df = pandas.DataFrame()
@@ -115,6 +117,7 @@ def AnnoyIndexer():
     downloadLocation += '/DownloadFiles'
     downloadTotalPath = os.path.join(
         currentPath, downloadLocation, generatedUUID)
+    print('Start Indexing')
     start_indexing(df, downloadTotalPath, vendor)
     indexerPath = os.path.join(downloadTotalPath, vendor + '_fvecs.ann')
 
@@ -122,11 +125,13 @@ def AnnoyIndexer():
     json_object = json.dumps(imagesDict, indent=4)
     jsonPath = os.path.join(downloadTotalPath, "info.json")
 
+    print('Write output')
     with open(jsonPath, "w") as outfile:
         outfile.write(json_object)
 
     # Download Both
     # ZIp files
+    print('Zip stuff')
     zipLocation = os.path.join(downloadTotalPath, generatedUUID + ".zip")
     with zipfile.ZipFile(zipLocation, 'w', zipfile.ZIP_DEFLATED) as zipObj:
         zipObj.write(jsonPath, os.path.basename(jsonPath))
