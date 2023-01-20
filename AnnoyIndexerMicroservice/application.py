@@ -2,6 +2,9 @@ import sys
 from flask import Flask, request, current_app, send_file
 import boto3
 from botocore.exceptions import ClientError
+from concurrent.futures import ThreadPoolExecutor
+import concurrent.futures
+import time
 import tqdm
 import os
 from annoy import AnnoyIndex
@@ -11,11 +14,9 @@ import pandas
 import json
 import zipfile
 import uuid
+from io import BytesIO
 
 application = Flask(__name__)
-
-# load_dotenv()
-
 
 def mongoConnect(osEnv, dbName, CollectionName):
     mongoURI = os.getenv(osEnv)
@@ -23,7 +24,6 @@ def mongoConnect(osEnv, dbName, CollectionName):
     mydb = myclient[dbName]
     mycol = mydb[CollectionName]
     return mycol
-
 
 # Mongo Global vars
 DB_NAME = "test"
@@ -46,6 +46,43 @@ def start_indexing(image_data, indexerPath, vendor):
 def helloWorld():
     return "Hello World"
 
+def downloadPackage(args):
+    bucketName = args[0]
+    package = args[1]
+    subTaskId = args[2]
+    #connect to s3
+
+    failed = False
+    while failed == False:
+        try:
+            s3 = boto3.resource('s3')
+            failed = True
+        except Exception as error:
+            print(error)
+            time.sleep(0.5)
+            pass
+    #download from the specified bucket and key
+    result = []
+    idx = 0
+    featureLen = 0
+    for obj in package:
+        try:
+            awsImage = s3.Object(bucketName, obj)
+        except ClientError as e:
+            print(e)
+            continue
+        # Append images to an array. And buffer them.
+        awsImageBytes = awsImage.get()['Body'].read()
+        arrNumpy = numpy.frombuffer(awsImageBytes, dtype=numpy.float32)
+        #print(featureFile, idx, len(featureFiles))
+        result.append(arrNumpy)
+        if idx == 0:
+            featureLen = len (arrNumpy)
+            #imagesDict['length'] = len(arrNumpy)
+            idx += 1
+
+    return [result, featureLen, subTaskId]
+
 @application.route("/annoy-indexer", methods=['GET'])
 def AnnoyIndexer():
 
@@ -65,7 +102,6 @@ def AnnoyIndexer():
     vendor = "Volkswagen"
 
     # Init AWS
-    s3 = boto3.resource('s3')
     bucketName = os.getenv("S3_BUCKET")
 
     # Init MongoDB
@@ -88,25 +124,27 @@ def AnnoyIndexer():
                     obj.rsplit('.', 1)[0] + ".bin" for obj in temp]
     arrayParts = []
     idx = 0
-    for featureFile in featureFiles:
-        # Check if the object exists or if we need to error handle it
-        try:
-            awsImage = s3.Object(bucketName, featureFile)
-            # print(awsImage)
-        except ClientError:
-            print(featureFile)
-            continue
-        # Append images to an array. And buffer them.
-        awsImageBytes = awsImage.get()['Body'].read()
-        arrNumpy = numpy.frombuffer(awsImageBytes, dtype=numpy.float32)
-        print(featureFile, idx, len(featureFiles))
-        arrayParts.append(arrNumpy)
-        if idx == 0:
-            imagesDict['length'] = len(arrNumpy)
-        idx += 1
-        if idx > 100:
-            break
+    fileTuples = []
+    count = 100
+    for idx in range(0, len(featureFiles), count):
+        fileTuples.append((idx, min(idx + count, len(featureFiles))))
 
+    subTaskId = 0
+    with ThreadPoolExecutor() as executor:
+        args = []
+        for fileChunkIdx in fileTuples:
+            args.append([bucketName, featureFiles[fileChunkIdx[0]: fileChunkIdx[1]], subTaskId])
+            subTaskId += 1
+        results = executor.map(downloadPackage, args)
+
+        idx = 0
+        for obj in results:
+            arrayParts += obj[0]
+            if idx == 0:
+                imagesDict['length'] = obj[1]
+            idx += 1
+
+    print(len(arrayParts), len(featureFiles))
     # Create a dataframe and create the indexer
     df = pandas.DataFrame()
     df['features'] = arrayParts
@@ -144,19 +182,28 @@ def AnnoyIndexer():
 
     return send_file(zipLocation, as_attachment=True)
 
-
 @application.route("/find-matching-part", methods=['POST'])
 def FindMatchingPart():
     content = request.json
     mycol = mongoConnect("MONGODB_URI", DB_NAME, COLLECTION_NAME)
 
     # FInds an object using an array. The "in" keyword is used to search for the array values. It doesn't return duplicates.
-    result = mycol.find(
-        {"image_file_names": {"$in": content["data"]}}, {"_id": 0})
-    listToReturn = [x for x in result]
+    dictToReturn = {}
+    amount = 0
+    for obj in content["data"]:
+        res = mycol.find_one({"image_file_names": obj}, {"_id": 0})
+        id = res['universal_uuid'] + res['file_name']
+        if id not in dictToReturn:
+            res['histo'] = 1
+            dictToReturn[id] = res
+        else:
+            dictToReturn[id]['histo'] += 1
+        amount += 1
 
-    return json.dumps(listToReturn)
+    for obj in dictToReturn:
+        dictToReturn[obj]['histo'] = float(dictToReturn[obj]['histo']) / float(amount)
 
+    return json.dumps(dictToReturn)
 
 @application.route("/get-psf-file", methods=['POST'])
 def GetPsfFile():
@@ -172,6 +219,19 @@ def GetPsfFile():
 
     return awsPsfBytes
 
+@application.route("/get-img-file", methods=['POST'])
+def GetImageFile():
+    content = request.json
+    requestImageFile = content["data"]
+    requestImageFileKey = "img/" + requestImageFile
+
+    s3 = boto3.resource('s3')
+    bucketName = os.getenv("S3_BUCKET")
+    awsPsfFile = s3.Object(bucketName, requestImageFileKey)
+    print(awsPsfFile)
+    awsPsfBytes = awsPsfFile.get()['Body'].read()
+
+    return awsPsfBytes
 
 if __name__ == '__main__':
     application.run(debug=True, threaded=True)
