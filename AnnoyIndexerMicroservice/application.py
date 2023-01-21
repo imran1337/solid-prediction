@@ -14,8 +14,11 @@ import pandas
 import json
 import zipfile
 import uuid
+import shutil
 from io import BytesIO
 
+threadExecutor = ThreadPoolExecutor(2)
+dictUsers = {}
 application = Flask(__name__)
 
 def mongoConnect(osEnv, dbName, CollectionName):
@@ -83,22 +86,11 @@ def downloadPackage(args):
 
     return [result, featureLen, subTaskId]
 
-@application.route("/annoy-indexer", methods=['GET'])
-def AnnoyIndexer():
-
-    #import dotenv
-    #dotenv.load_dotenv()
-
-    currentPath = current_app.root_path
-    # test = os.listdir(currentPath)
-
+def generateAnnoyIndexerTask(currentPath, generatedUUID):
     # TODO get a better way to clean up the files
     # for item in test:
     #   if item.endswith(".zip"):
     #      os.remove(os.path.join(currentPath, item))
-
-    generatedUUID = str(uuid.uuid4())
-
     vendor = "Volkswagen"
 
     # Init AWS
@@ -149,10 +141,7 @@ def AnnoyIndexer():
     df = pandas.DataFrame()
     df['features'] = arrayParts
 
-    downloadLocation = os.path.dirname(__file__)
-    if getattr(sys, 'frozen', False):
-        downloadLocation = os.path.dirname(sys.executable)
-    downloadLocation += '/DownloadFiles'
+    downloadLocation = currentPath + '/DownloadFiles'
     downloadTotalPath = os.path.join(
         currentPath, downloadLocation, generatedUUID)
     print('Start Indexing')
@@ -178,9 +167,32 @@ def AnnoyIndexer():
     # Cleanup files
     os.remove(jsonPath)
     os.remove(indexerPath)
-    # TODO: Build a function that cleans up the whole directory after a day
 
-    return send_file(zipLocation, as_attachment=True)
+    return zipLocation
+
+@application.route("/annoy-indexer-setup", methods=['GET'])
+def annoyIndexer():
+    id = str(uuid.uuid4())
+    dictUsers[id] = threadExecutor.submit(generateAnnoyIndexerTask, current_app.root_path, id) #generateAnnoyIndexerTask
+    return json.dumps({'id': id})
+
+@application.route("/get-annoy-indexer/<id>", methods=['GET'])
+def getAnnoyIndexer(id):
+    if id not in dictUsers:
+        return json.dumps({'id': id, 'result' : 'id unknown'})
+    if dictUsers[id].running():
+        return json.dumps({'id': id, 'result' : 'running'})
+    elif dictUsers[id].cancelled():
+        return json.dumps({'id': id, 'result': 'cancelled'})
+    elif dictUsers[id].done():
+        return send_file(dictUsers[id].result(), as_attachment=True)
+
+@application.route("/remove-annoy-indexer/<id>", methods=['GET'])
+def removeAnnoyIndexer(id):
+    if id in dictUsers and dictUsers[id].done():
+        shutil.rmtree(os.path.join(current_app.root_path, 'DownloadFiles', id))
+        return json.dumps({'id': id, 'result': 'removed'})
+    return json.dumps({'id': id, 'result': 'id unknown'})
 
 @application.route("/find-matching-part", methods=['POST'])
 def FindMatchingPart():
