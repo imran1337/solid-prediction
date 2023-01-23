@@ -1,9 +1,7 @@
-import sys
 from flask import Flask, request, current_app, send_file
 import boto3
 from botocore.exceptions import ClientError
 from concurrent.futures import ThreadPoolExecutor
-import concurrent.futures
 import time
 import tqdm
 import os
@@ -15,7 +13,6 @@ import json
 import zipfile
 import uuid
 import shutil
-from io import BytesIO
 
 threadExecutor = ThreadPoolExecutor(2)
 dictUsers = {}
@@ -44,10 +41,6 @@ def start_indexing(image_data, indexerPath, vendor):
         # print(t, i, v)
     t.build(100)  # 100 trees
     t.save(os.path.join(indexerPath, vendor + '_fvecs.ann'))
-
-@application.route("/", methods=['GET'])
-def helloWorld():
-    return "Hello World"
 
 def downloadPackage(args):
     bucketName = args[0]
@@ -173,7 +166,7 @@ def generateAnnoyIndexerTask(currentPath, generatedUUID):
 @application.route("/annoy-indexer-setup", methods=['GET'])
 def annoyIndexer():
     id = str(uuid.uuid4())
-    dictUsers[id] = threadExecutor.submit(generateAnnoyIndexerTask, current_app.root_path, id) #generateAnnoyIndexerTask
+    dictUsers[id] = threadExecutor.submit(generateAnnoyIndexerTask, current_app.root_path, id)
     return json.dumps({'id': id})
 
 @application.route("/get-annoy-indexer/<id>", methods=['GET'])
@@ -186,11 +179,14 @@ def getAnnoyIndexer(id):
         return json.dumps({'id': id, 'result': 'cancelled'})
     elif dictUsers[id].done():
         return send_file(dictUsers[id].result(), as_attachment=True)
+    else:
+        return json.dumps({'id': id, 'result': 'not started yet'})
 
 @application.route("/remove-annoy-indexer/<id>", methods=['GET'])
 def removeAnnoyIndexer(id):
     if id in dictUsers and dictUsers[id].done():
         shutil.rmtree(os.path.join(current_app.root_path, 'DownloadFiles', id))
+        del(dictUsers[id])
         return json.dumps({'id': id, 'result': 'removed'})
     return json.dumps({'id': id, 'result': 'id unknown'})
 
@@ -226,7 +222,6 @@ def GetPsfFile():
     s3 = boto3.resource('s3')
     bucketName = os.getenv("S3_BUCKET")
     awsPsfFile = s3.Object(bucketName, requestPsfFileKey)
-    print(awsPsfFile)
     awsPsfBytes = awsPsfFile.get()['Body'].read()
 
     return awsPsfBytes
@@ -240,7 +235,6 @@ def GetImageFile():
     s3 = boto3.resource('s3')
     bucketName = os.getenv("S3_BUCKET")
     awsPsfFile = s3.Object(bucketName, requestImageFileKey)
-    print(awsPsfFile)
     awsPsfBytes = awsPsfFile.get()['Body'].read()
 
     return awsPsfBytes
