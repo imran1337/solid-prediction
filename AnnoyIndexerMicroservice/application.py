@@ -239,5 +239,9 @@ def GetImageFile():
 
     return awsPsfBytes
 
+@application.route("/is-alive", methods=['GET'])
+def isAlive():
+    return json.dumps({'alive': 1})
+
 if __name__ == '__main__':
     application.run(debug=True, threaded=True)
