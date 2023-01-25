@@ -116,8 +116,6 @@ func (iter *DirectoryIterator) Err() error {
 	return iter.err
 }
 
-// The key is gonna be the path? Or the name? Need to check
-
 // UploadObject returns a BatchUploadObject and sets the After field to
 // close the file. UploadObject is a method of NewDirectoryIterator
 func (iter *DirectoryIterator) UploadObject() s3manager.BatchUploadObject {
