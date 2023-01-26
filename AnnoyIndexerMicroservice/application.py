@@ -38,7 +38,7 @@ def mongoConnect(osEnv, dbName, CollectionName):
     mycol = mydb[CollectionName]
     return mycol
 
-def start_indexing(image_data, indexerPath, vendor, category):
+def startIndexing(image_data, indexerPath, vendor, category):
     if not os.path.exists(indexerPath):
         os.makedirs(indexerPath)
 
@@ -141,7 +141,7 @@ def generateAnnoyIndexerTask(currentPath, vendor, category, generatedUUID):
     downloadTotalPath = os.path.join(
         currentPath, downloadLocation, generatedUUID)
     print('Start Indexing')
-    start_indexing(df, downloadTotalPath, vendor, category)
+    startIndexing(df, downloadTotalPath, vendor, category)
     indexerPath = os.path.join(downloadTotalPath, vendor + '_' + category + '_fvecs.ann')
 
     # Create JSON File
@@ -150,7 +150,7 @@ def generateAnnoyIndexerTask(currentPath, vendor, category, generatedUUID):
 
     print('Write output')
     with open(jsonPath, "w") as outfile:
-        outfile.write(encrypt_message(os.getenv('ENCRYPTION_KEY'), json_object))
+        outfile.write(encryptMessage(os.getenv('ENCRYPTION_KEY'), json_object))
 
     # Download Both
     # ZIp files
@@ -166,14 +166,14 @@ def generateAnnoyIndexerTask(currentPath, vendor, category, generatedUUID):
 
     return zipLocation
 
-def gen_fernet_key(passcode):
+def generateFernetKey(passcode):
     assert isinstance(passcode, bytes)
     hlib = hashlib.md5()
     hlib.update(passcode)
     return base64.urlsafe_b64encode(hlib.hexdigest().encode('latin-1'))
 
-def encrypt_message(key, msg):
-    encoded_key = gen_fernet_key(key.encode('utf-8'))
+def encryptMessage(key, msg):
+    encoded_key = generateFernetKey(key.encode('utf-8'))
     handler = F(encoded_key)
     encoded_msg = msg if isinstance(msg, bytes) else msg.encode()
     treatment = handler.encrypt(encoded_msg)
@@ -207,7 +207,7 @@ def removeAnnoyIndexer(id):
     return json.dumps({'id': id, 'result': 'id unknown'})
 
 @application.route("/find-matching-part", methods=['POST'])
-def FindMatchingPart():
+def findMatchingPart():
     content = request.json
     mycol = mongoConnect("MONGODB_URI", DB_NAME, COLLECTION_NAME)
 
@@ -230,7 +230,7 @@ def FindMatchingPart():
     return json.dumps(dictToReturn)
 
 @application.route("/get-psf-file", methods=['POST'])
-def GetPsfFile():
+def getPsfFile():
     content = request.json
     requestPsfFile = content["data"]
     requestPsfFileKey = "psf/" + requestPsfFile
@@ -243,7 +243,7 @@ def GetPsfFile():
     return awsPsfBytes
 
 @application.route("/get-img-file", methods=['POST'])
-def GetImageFile():
+def getImageFile():
     content = request.json
     requestImageFile = content["data"]
     requestImageFileKey = "img/" + requestImageFile
