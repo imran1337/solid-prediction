@@ -1,4 +1,5 @@
 from flask import Flask, request, current_app, send_file
+from cryptography.fernet import Fernet as F
 import boto3
 from botocore.exceptions import ClientError
 from concurrent.futures import ThreadPoolExecutor
@@ -13,10 +14,22 @@ import json
 import zipfile
 import uuid
 import shutil
+import base64, hashlib
 
 threadExecutor = ThreadPoolExecutor(2)
 dictUsers = {}
 application = Flask(__name__)
+# Mongo Global vars
+DB_NAME = "test"
+COLLECTION_NAME = "JSONInfo"
+AMOUNT_PARTS = 7.0
+
+environment = 'dev'
+
+
+if environment == 'dev':
+    import dotenv
+    dotenv.load_dotenv()
 
 def mongoConnect(osEnv, dbName, CollectionName):
     mongoURI = os.getenv(osEnv)
@@ -25,11 +38,7 @@ def mongoConnect(osEnv, dbName, CollectionName):
     mycol = mydb[CollectionName]
     return mycol
 
-# Mongo Global vars
-DB_NAME = "test"
-COLLECTION_NAME = "JSONInfo"
-
-def start_indexing(image_data, indexerPath, vendor):
+def startIndexing(image_data, indexerPath, vendor, category):
     if not os.path.exists(indexerPath):
         os.makedirs(indexerPath)
 
@@ -40,7 +49,7 @@ def start_indexing(image_data, indexerPath, vendor):
         t.add_item(i, v)
         # print(t, i, v)
     t.build(100)  # 100 trees
-    t.save(os.path.join(indexerPath, vendor + '_fvecs.ann'))
+    t.save(os.path.join(indexerPath, vendor  + '_' + category + '_fvecs.ann'))
 
 def downloadPackage(args):
     bucketName = args[0]
@@ -79,13 +88,7 @@ def downloadPackage(args):
 
     return [result, featureLen, subTaskId]
 
-def generateAnnoyIndexerTask(currentPath, generatedUUID):
-    # TODO get a better way to clean up the files
-    # for item in test:
-    #   if item.endswith(".zip"):
-    #      os.remove(os.path.join(currentPath, item))
-    vendor = "Volkswagen"
-
+def generateAnnoyIndexerTask(currentPath, vendor, category, generatedUUID):
     # Init AWS
     bucketName = os.getenv("S3_BUCKET")
 
@@ -94,7 +97,7 @@ def generateAnnoyIndexerTask(currentPath, generatedUUID):
     temp = []
 
     # Check MongoDB to see if the JSON files have a PSF File
-    mypsfquery = {"psf_file_name": {"$exists": True}, "vendor": vendor}
+    mypsfquery = {"psf_file_name": {"$exists": True}, "vendor": vendor, 'category': category}
     mydoc = mycol.find(mypsfquery, {"image_file_names": 1})
 
     for x in mydoc:
@@ -138,16 +141,16 @@ def generateAnnoyIndexerTask(currentPath, generatedUUID):
     downloadTotalPath = os.path.join(
         currentPath, downloadLocation, generatedUUID)
     print('Start Indexing')
-    start_indexing(df, downloadTotalPath, vendor)
-    indexerPath = os.path.join(downloadTotalPath, vendor + '_fvecs.ann')
+    startIndexing(df, downloadTotalPath, vendor, category)
+    indexerPath = os.path.join(downloadTotalPath, vendor + '_' + category + '_fvecs.ann')
 
     # Create JSON File
     json_object = json.dumps(imagesDict, indent=4)
-    jsonPath = os.path.join(downloadTotalPath, "info.json")
+    jsonPath = os.path.join(downloadTotalPath, vendor + '_' + category + "_info.json")
 
     print('Write output')
     with open(jsonPath, "w") as outfile:
-        outfile.write(json_object)
+        outfile.write(encryptMessage(os.getenv('ENCRYPTION_KEY'), json_object))
 
     # Download Both
     # ZIp files
@@ -163,10 +166,23 @@ def generateAnnoyIndexerTask(currentPath, generatedUUID):
 
     return zipLocation
 
-@application.route("/annoy-indexer-setup", methods=['GET'])
-def annoyIndexer():
+def generateFernetKey(passcode):
+    assert isinstance(passcode, bytes)
+    hlib = hashlib.md5()
+    hlib.update(passcode)
+    return base64.urlsafe_b64encode(hlib.hexdigest().encode('latin-1'))
+
+def encryptMessage(key, msg):
+    encoded_key = generateFernetKey(key.encode('utf-8'))
+    handler = F(encoded_key)
+    encoded_msg = msg if isinstance(msg, bytes) else msg.encode()
+    treatment = handler.encrypt(encoded_msg)
+    return str(treatment, 'utf-8')
+
+@application.route("/annoy-indexer-setup/<vendor>/<cat>", methods=['GET'])
+def annoyIndexer(vendor, cat):
     id = str(uuid.uuid4())
-    dictUsers[id] = threadExecutor.submit(generateAnnoyIndexerTask, current_app.root_path, id)
+    dictUsers[id] = threadExecutor.submit(generateAnnoyIndexerTask, current_app.root_path, vendor, cat, id)
     return json.dumps({'id': id})
 
 @application.route("/get-annoy-indexer/<id>", methods=['GET'])
@@ -191,7 +207,7 @@ def removeAnnoyIndexer(id):
     return json.dumps({'id': id, 'result': 'id unknown'})
 
 @application.route("/find-matching-part", methods=['POST'])
-def FindMatchingPart():
+def findMatchingPart():
     content = request.json
     mycol = mongoConnect("MONGODB_URI", DB_NAME, COLLECTION_NAME)
 
@@ -209,12 +225,12 @@ def FindMatchingPart():
         amount += 1
 
     for obj in dictToReturn:
-        dictToReturn[obj]['histo'] = float(dictToReturn[obj]['histo']) / float(amount)
+        dictToReturn[obj]['histo'] = float(dictToReturn[obj]['histo']) / AMOUNT_PARTS
 
     return json.dumps(dictToReturn)
 
 @application.route("/get-psf-file", methods=['POST'])
-def GetPsfFile():
+def getPsfFile():
     content = request.json
     requestPsfFile = content["data"]
     requestPsfFileKey = "psf/" + requestPsfFile
@@ -227,7 +243,7 @@ def GetPsfFile():
     return awsPsfBytes
 
 @application.route("/get-img-file", methods=['POST'])
-def GetImageFile():
+def getImageFile():
     content = request.json
     requestImageFile = content["data"]
     requestImageFileKey = "img/" + requestImageFile
@@ -238,6 +254,10 @@ def GetImageFile():
     awsPsfBytes = awsPsfFile.get()['Body'].read()
 
     return awsPsfBytes
+
+@application.route("/is-alive", methods=['GET'])
+def isAlive():
+    return json.dumps({'alive': 1})
 
 if __name__ == '__main__':
     application.run(debug=True, threaded=True)
