@@ -396,7 +396,7 @@ func main() {
 			}
 
 			// Initialize workers and chanels
-			bucket := os.Getenv("S3_TEST_BUCKET")
+			bucket := os.Getenv("S3_BUCKET")
 			pythonServerURL := os.Getenv("PYTHON_SERVER_URL")
 
 			jobs := make(chan channeltypes.ImagePath, MAX_BUFFER)
