@@ -102,7 +102,7 @@ func main() {
 		fileFromPost, err := c.FormFile("File")
 		if err != nil {
 			errorFunc.ErrorFormated("E000001")
-			return c.SendStatus(500)
+			return err //c.SendStatus(500)
 		}
 
 		fileName := fileFromPost.Filename
@@ -112,7 +112,7 @@ func main() {
 		// Check if the file is a zip file
 		if filepath.Ext(fileName) != ".zip" {
 			errorFunc.ErrorFormated("E000003")
-			return c.SendStatus(500)
+			return err //c.SendStatus(500)
 		}
 
 		// Normal flag is the usual branch the file follows, if it's a duplicate the front end will be notified, and a new branch will activate.
@@ -129,7 +129,7 @@ func main() {
 			multiPartfile, err := fileFromPost.Open()
 			if err != nil {
 				errorFunc.ErrorFormated("E000002")
-				return c.SendStatus(500)
+				return err //c.SendStatus(500)
 			}
 
 			defer multiPartfile.Close()
@@ -137,7 +137,7 @@ func main() {
 			encryptedFile, err := io.ReadAll(multiPartfile)
 			if err != nil {
 				errorFunc.ErrorFormated("E000004")
-				return c.SendStatus(500)
+				return err //c.SendStatus(500)
 			}
 
 			// Key 32 bytes length
@@ -145,14 +145,14 @@ func main() {
 			block, err := aes.NewCipher(key)
 			if err != nil {
 				errorFunc.ErrorFormated("E000005")
-				return c.SendStatus(500)
+				return err //c.SendStatus(500)
 			}
 			// We are going to use the GCM mode, which is a stream mode with authentication.
 			// So we don’t have to worry about the padding or doing the authentication, since it is already done by the package.
 			gcm, err := cipher.NewGCM(block)
 			if err != nil {
 				errorFunc.ErrorFormated("E000006")
-				return c.SendStatus(500)
+				return err //c.SendStatus(500)
 			}
 			// This mode requires a nonce array. It works like an IV.
 			// Make sure this is never the same value, that is, change it every time you will encrypt, even if it is the same file.
@@ -161,7 +161,7 @@ func main() {
 			nonce := make([]byte, gcm.NonceSize())
 			if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
 				errorFunc.ErrorFormated("E000007")
-				return c.SendStatus(500)
+				return err //c.SendStatus(500)
 			}
 
 			// Removing the nonce
@@ -170,17 +170,17 @@ func main() {
 			decryptedFile, err := gcm.Open(nil, nonce2, encryptedFile, nil)
 			if err != nil {
 				errorFunc.ErrorFormated("E000008")
-				return c.SendStatus(500)
+				return err //c.SendStatus(500)
 			}
 			err = os.WriteFile(fileName, decryptedFile, 0777)
 			if err != nil {
 				errorFunc.ErrorFormated("E000009")
-				return c.SendStatus(500)
+				return err //c.SendStatus(500)
 			}
 			file, err := os.Open(fileName)
 			if err != nil {
 				errorFunc.ErrorFormated("E000010")
-				return c.SendStatus(500)
+				return err //c.SendStatus(500)
 			}
 
 			// Unzip to temp folder
@@ -188,7 +188,7 @@ func main() {
 			archive, err := zip.OpenReader(fileFromPost.Filename)
 			if err != nil {
 				errorFunc.ErrorFormated("E000011")
-				return c.SendStatus(500)
+				return err //c.SendStatus(500)
 			}
 
 			imgFolderExists := false
@@ -210,10 +210,10 @@ func main() {
 				err = os.Remove("./" + fileName)
 				if err != nil {
 					errorFunc.ErrorFormated("E000012")
-					return c.SendStatus(500)
+					return err //c.SendStatus(500)
 				}
 				c.SendString("E000013")
-				return c.SendStatus(500)
+				return err //c.SendStatus(500)
 			}
 
 			for _, f := range archive.File {
@@ -229,24 +229,24 @@ func main() {
 				}
 				if err := os.MkdirAll(filepath.Dir(filePath), os.ModePerm); err != nil {
 					errorFunc.ErrorFormated("E000014")
-					return c.SendStatus(500)
+					return err //c.SendStatus(500)
 				}
 
 				dstFile, err := os.OpenFile(filePath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, f.Mode())
 				if err != nil {
 					errorFunc.ErrorFormated("E000015")
-					return c.SendStatus(500)
+					return err //c.SendStatus(500)
 				}
 
 				fileInArchive, err := f.Open()
 				if err != nil {
 					errorFunc.ErrorFormated("E000016")
-					return c.SendStatus(500)
+					return err //c.SendStatus(500)
 				}
 
 				if _, err := io.Copy(dstFile, fileInArchive); err != nil {
 					errorFunc.ErrorFormated("E000017")
-					return c.SendStatus(500)
+					return err //c.SendStatus(500)
 				}
 				dstFile.Close()
 				fileInArchive.Close()
@@ -262,7 +262,7 @@ func main() {
 			imgDir, err := os.ReadDir(imgBaseDir)
 			if err != nil {
 				errorFunc.ErrorFormated("E000018")
-				return c.SendStatus(500)
+				return err //c.SendStatus(500)
 			}
 			for i := range imgDir {
 				singleImageCurrentDir := imgBaseDir + imgDir[i].Name()
@@ -270,7 +270,7 @@ func main() {
 				err = os.Rename(singleImageCurrentDir, singleImageNewDir)
 				if err != nil {
 					errorFunc.ErrorFormated("E000019")
-					return c.SendStatus(500)
+					return err //c.SendStatus(500)
 				}
 			}
 
@@ -279,7 +279,7 @@ func main() {
 			psfDir, err := os.ReadDir(psfBaseDir)
 			if err != nil {
 				errorFunc.ErrorFormated("E000020")
-				return c.SendStatus(500)
+				return err //c.SendStatus(500)
 			}
 			for i := range psfDir {
 				singlePsfCurrentDir := psfBaseDir + psfDir[i].Name()
@@ -287,7 +287,7 @@ func main() {
 				err = os.Rename(singlePsfCurrentDir, singlePsfNewDir)
 				if err != nil {
 					errorFunc.ErrorFormated("E000021")
-					return c.SendStatus(500)
+					return err //c.SendStatus(500)
 				}
 			}
 
@@ -295,13 +295,13 @@ func main() {
 			err = os.Remove("./" + fileName)
 			if err != nil {
 				errorFunc.ErrorFormated("E000012")
-				return c.SendStatus(500)
+				return err //c.SendStatus(500)
 			}
 
 			JSONDir, err := os.ReadDir(workingDir)
 			if err != nil {
 				errorFunc.ErrorFormated("E000022")
-				return c.SendStatus(500)
+				return err //c.SendStatus(500)
 			}
 			var JSONFile string
 			for _, JSONDirFile := range JSONDir {
@@ -315,14 +315,14 @@ func main() {
 			byteValue, err := os.ReadFile(pathToJson)
 			if err != nil {
 				errorFunc.ErrorFormated("E000023")
-				return c.SendStatus(500)
+				return err //c.SendStatus(500)
 			}
 
 			var result []JSONData
 			err = json.Unmarshal(byteValue, &result)
 			if err != nil {
 				errorFunc.ErrorFormated("E000024")
-				return c.SendStatus(500)
+				return err //c.SendStatus(500)
 			}
 
 			// Updates certain properties of the JSON file
@@ -352,7 +352,7 @@ func main() {
 			//client, err := mongo.Connect(context.TODO(), clientOptions)
 			if err != nil {
 				errorFunc.ErrorFormated("E000025")
-				return c.SendStatus(500)
+				return err //c.SendStatus(500)
 			}
 
 			// get collection as ref, the name of the database, then the name of the collection
@@ -367,18 +367,18 @@ func main() {
 					fmt.Println("Clear")
 				}
 				errorFunc.ErrorFormated(err.Error())
-				return c.SendStatus(500)
+				return err //c.SendStatus(500)
 			}
 			var results []JSONData
 			if err = cursor.All(context.TODO(), &results); err != nil {
 				errorFunc.ErrorFormated("E000027")
-				return c.SendStatus(500)
+				return err //c.SendStatus(500)
 			}
 			if len(results) > 0 {
 				err = os.RemoveAll("./output")
 				if err != nil {
 					errorFunc.ErrorFormated("E000028")
-					return c.SendStatus(500)
+					return err //c.SendStatus(500)
 				}
 				return c.SendString("File already exists!")
 			}
@@ -392,7 +392,7 @@ func main() {
 			_, err = collection.InsertMany(context.TODO(), newResults)
 			if err != nil {
 				errorFunc.ErrorFormated("E000029")
-				return c.SendStatus(500)
+				return err //c.SendStatus(500)
 			}
 
 			// Initialize workers and chanels
