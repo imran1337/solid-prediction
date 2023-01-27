@@ -2,7 +2,6 @@ package main
 
 import (
 	"archive/zip"
-	"bytes"
 	"context"
 	"crypto/aes"
 	"crypto/cipher"
@@ -10,17 +9,17 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"log"
-	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
-	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/aws/session"
-	"github.com/aws/aws-sdk-go/service/s3/s3manager"
+	awsupload "uploadfilesmicroservice/awsCode"
+	errorFunc "uploadfilesmicroservice/errorHandler"
+	finishingFuncs "uploadfilesmicroservice/finishingDetails"
+	channeltypes "uploadfilesmicroservice/typeDef"
+
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/cors"
 	"github.com/google/uuid"
@@ -62,82 +61,12 @@ type JSONData struct {
 	User                string
 }
 
-type DirectoryIterator struct {
-	filePaths []string
-	bucket    string
-	next      struct {
-		path string
-		f    *os.File
-	}
-	objType string
-	err     error
+type requestInfo struct {
+	id     string
+	status string // "Completed", "Not Completed"
 }
 
-type Message struct {
-	UUID     string
-	FileName string
-}
-
-func NewDirectoryIterator(bucket, dir string, objType string) s3manager.BatchUploadIterator {
-	paths := []string{}
-	filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
-		// The directories are not important
-		if !info.IsDir() {
-			paths = append(paths, path)
-		}
-		return nil
-	})
-	return &DirectoryIterator{
-		filePaths: paths,
-		bucket:    bucket,
-		objType:   objType,
-	}
-}
-
-// Next opens the next file and stops iteration if it fails to open
-// a file. Next is a method of NewDirectoryIterator
-func (iter *DirectoryIterator) Next() bool {
-	if len(iter.filePaths) == 0 {
-		iter.next.f = nil
-		return false
-	}
-	f, err := os.Open(iter.filePaths[0])
-	iter.err = err
-
-	iter.next.f = f
-	iter.next.path = iter.filePaths[0]
-
-	iter.filePaths = iter.filePaths[1:]
-	return true && iter.Err() == nil
-}
-
-// Err returns an error that was set during opening the file. Err is a method of NewDirectoryIterator.
-func (iter *DirectoryIterator) Err() error {
-	return iter.err
-}
-
-// UploadObject returns a BatchUploadObject and sets the After field to
-// close the file. UploadObject is a method of NewDirectoryIterator
-func (iter *DirectoryIterator) UploadObject() s3manager.BatchUploadObject {
-	f := iter.next.f
-	fileName := filepath.Base(f.Name())
-	newPath := fmt.Sprintf("/%s/", iter.objType) + fileName
-	return s3manager.BatchUploadObject{
-		Object: &s3manager.UploadInput{
-			Bucket: &iter.bucket,
-			Key:    &newPath,
-			Body:   f,
-		},
-		After: func() error {
-			return f.Close()
-		},
-	}
-}
-
-func errorFormated(errorMessage string, c *fiber.Ctx) error {
-	c.SendString(fmt.Sprintf("You receveid the following error: %s", errorMessage))
-	return c.SendStatus(500)
-}
+var requestsQueue []requestInfo
 
 func main() {
 	// This needs to be changed when the server goes to production.
@@ -160,6 +89,9 @@ func main() {
 			AllowHeaders: "Origin, Content-Type, Accept"}))
 	}
 
+	MAX_WORKERS := 10
+	MAX_BUFFER := 10
+
 	app.Post("/send/:flag", func(c *fiber.Ctx) error {
 		choiceFlag := c.Params("flag")
 
@@ -169,7 +101,8 @@ func main() {
 		// Receives all the header + file
 		fileFromPost, err := c.FormFile("File")
 		if err != nil {
-			return errorFormated("E000001", c)
+			errorFunc.ErrorFormated("E000001")
+			return err //c.SendStatus(500)
 		}
 
 		fileName := fileFromPost.Filename
@@ -178,36 +111,48 @@ func main() {
 
 		// Check if the file is a zip file
 		if filepath.Ext(fileName) != ".zip" {
-			errorFormated("E000003", c)
+			errorFunc.ErrorFormated("E000003")
+			return err //c.SendStatus(500)
 		}
 
 		// Normal flag is the usual branch the file follows, if it's a duplicate the front end will be notified, and a new branch will activate.
 
 		if choiceFlag == "normal" {
+			start := time.Now()
+
+			newRequest := requestInfo{
+				id:     id.String(),
+				status: "Not Completed",
+			}
+			requestsQueue = append(requestsQueue, newRequest)
 
 			multiPartfile, err := fileFromPost.Open()
 			if err != nil {
-				return errorFormated("E000002", c)
+				errorFunc.ErrorFormated("E000002")
+				return err //c.SendStatus(500)
 			}
 
 			defer multiPartfile.Close()
 
 			encryptedFile, err := io.ReadAll(multiPartfile)
 			if err != nil {
-				return errorFormated("E000004", c)
+				errorFunc.ErrorFormated("E000004")
+				return err //c.SendStatus(500)
 			}
 
 			// Key 32 bytes length
-			key, _ := ioutil.ReadFile("RandomNumbers")
+			key, _ := os.ReadFile("RandomNumbers")
 			block, err := aes.NewCipher(key)
 			if err != nil {
-				return errorFormated("E000005", c)
+				errorFunc.ErrorFormated("E000005")
+				return err //c.SendStatus(500)
 			}
 			// We are going to use the GCM mode, which is a stream mode with authentication.
 			// So we don’t have to worry about the padding or doing the authentication, since it is already done by the package.
 			gcm, err := cipher.NewGCM(block)
 			if err != nil {
-				return errorFormated("E000006", c)
+				errorFunc.ErrorFormated("E000006")
+				return err //c.SendStatus(500)
 			}
 			// This mode requires a nonce array. It works like an IV.
 			// Make sure this is never the same value, that is, change it every time you will encrypt, even if it is the same file.
@@ -215,7 +160,8 @@ func main() {
 			// Never use more than 2^32 random nonces with a given key because of the risk of repeat.
 			nonce := make([]byte, gcm.NonceSize())
 			if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
-				return errorFormated("E000007", c)
+				errorFunc.ErrorFormated("E000007")
+				return err //c.SendStatus(500)
 			}
 
 			// Removing the nonce
@@ -223,22 +169,26 @@ func main() {
 			encryptedFile = encryptedFile[gcm.NonceSize():]
 			decryptedFile, err := gcm.Open(nil, nonce2, encryptedFile, nil)
 			if err != nil {
-				return errorFormated("E000008", c)
+				errorFunc.ErrorFormated("E000008")
+				return err //c.SendStatus(500)
 			}
-			err = ioutil.WriteFile(fileName, decryptedFile, 0777)
+			err = os.WriteFile(fileName, decryptedFile, 0777)
 			if err != nil {
-				return errorFormated("E000009", c)
+				errorFunc.ErrorFormated("E000009")
+				return err //c.SendStatus(500)
 			}
 			file, err := os.Open(fileName)
 			if err != nil {
-				return errorFormated("E000010", c)
+				errorFunc.ErrorFormated("E000010")
+				return err //c.SendStatus(500)
 			}
 
-			// Unzip to temp folder?
-			dst := "output"
+			// Unzip to temp folder
+			dst := "output/" + id.String()
 			archive, err := zip.OpenReader(fileFromPost.Filename)
 			if err != nil {
-				return errorFormated("E000011", c)
+				errorFunc.ErrorFormated("E000011")
+				return err //c.SendStatus(500)
 			}
 
 			imgFolderExists := false
@@ -259,41 +209,44 @@ func main() {
 				file.Close()
 				err = os.Remove("./" + fileName)
 				if err != nil {
-					return errorFormated("E000012", c)
+					errorFunc.ErrorFormated("E000012")
+					return err //c.SendStatus(500)
 				}
 				c.SendString("E000013")
-				return c.SendStatus(500)
+				return err //c.SendStatus(500)
 			}
 
 			for _, f := range archive.File {
 				filePath := filepath.Join(dst, f.Name)
-				fmt.Println("unzipping file", filePath)
 
 				if !strings.HasPrefix(filePath, filepath.Clean(dst)+string(os.PathSeparator)) {
 					fmt.Println("Invalid File Path")
 				}
 				if f.FileInfo().IsDir() {
-					fmt.Println("Creating directory...")
 
 					os.MkdirAll(filePath, os.ModePerm)
 					continue
 				}
 				if err := os.MkdirAll(filepath.Dir(filePath), os.ModePerm); err != nil {
-					return errorFormated("E000014", c)
+					errorFunc.ErrorFormated("E000014")
+					return err //c.SendStatus(500)
 				}
 
 				dstFile, err := os.OpenFile(filePath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, f.Mode())
 				if err != nil {
-					return errorFormated("E000015", c)
+					errorFunc.ErrorFormated("E000015")
+					return err //c.SendStatus(500)
 				}
 
 				fileInArchive, err := f.Open()
 				if err != nil {
-					return errorFormated("E000016", c)
+					errorFunc.ErrorFormated("E000016")
+					return err //c.SendStatus(500)
 				}
 
 				if _, err := io.Copy(dstFile, fileInArchive); err != nil {
-					return errorFormated("E000017", c)
+					errorFunc.ErrorFormated("E000017")
+					return err //c.SendStatus(500)
 				}
 				dstFile.Close()
 				fileInArchive.Close()
@@ -301,46 +254,54 @@ func main() {
 			}
 			archive.Close()
 			file.Close()
+			workingDir := strings.Join([]string{"./output", id.String(), fileNameOnly}, "/")
+			removeDir := strings.Join([]string{"./output", id.String()}, "/")
 
 			// Rename img folder file names
-			imgBaseDir := "./output/" + fileNameOnly + "/img/"
+			imgBaseDir := workingDir + "/img/"
 			imgDir, err := os.ReadDir(imgBaseDir)
 			if err != nil {
-				return errorFormated("E000018", c)
+				errorFunc.ErrorFormated("E000018")
+				return err //c.SendStatus(500)
 			}
 			for i := range imgDir {
 				singleImageCurrentDir := imgBaseDir + imgDir[i].Name()
 				singleImageNewDir := imgBaseDir + id.String() + imgDir[i].Name()
 				err = os.Rename(singleImageCurrentDir, singleImageNewDir)
 				if err != nil {
-					return errorFormated("E000019", c)
+					errorFunc.ErrorFormated("E000019")
+					return err //c.SendStatus(500)
 				}
 			}
 
 			// Rename psf folder file names
-			psfBaseDir := "./output/" + fileNameOnly + "/psf/"
+			psfBaseDir := workingDir + "/psf/"
 			psfDir, err := os.ReadDir(psfBaseDir)
 			if err != nil {
-				return errorFormated("E000020", c)
+				errorFunc.ErrorFormated("E000020")
+				return err //c.SendStatus(500)
 			}
 			for i := range psfDir {
 				singlePsfCurrentDir := psfBaseDir + psfDir[i].Name()
 				singlePsfNewDir := psfBaseDir + id.String() + psfDir[i].Name()
 				err = os.Rename(singlePsfCurrentDir, singlePsfNewDir)
 				if err != nil {
-					return errorFormated("E000021", c)
+					errorFunc.ErrorFormated("E000021")
+					return err //c.SendStatus(500)
 				}
 			}
 
 			// Eliminate the zip file
 			err = os.Remove("./" + fileName)
 			if err != nil {
-				return errorFormated("E000012", c)
+				errorFunc.ErrorFormated("E000012")
+				return err //c.SendStatus(500)
 			}
 
-			JSONDir, err := os.ReadDir("./output/" + fileNameOnly)
+			JSONDir, err := os.ReadDir(workingDir)
 			if err != nil {
-				return errorFormated("E000022", c)
+				errorFunc.ErrorFormated("E000022")
+				return err //c.SendStatus(500)
 			}
 			var JSONFile string
 			for _, JSONDirFile := range JSONDir {
@@ -350,16 +311,18 @@ func main() {
 
 			}
 			// Read JSON file, would it be better to just search for the JSON file in the filesystem
-			pathToJson := filepath.Join(fileNameOnly, JSONFile)
-			byteValue, err := ioutil.ReadFile("./output/" + pathToJson)
+			pathToJson := filepath.Join(workingDir, JSONFile)
+			byteValue, err := os.ReadFile(pathToJson)
 			if err != nil {
-				return errorFormated("E000023", c)
+				errorFunc.ErrorFormated("E000023")
+				return err //c.SendStatus(500)
 			}
 
 			var result []JSONData
 			err = json.Unmarshal(byteValue, &result)
 			if err != nil {
-				return errorFormated("E000024", c)
+				errorFunc.ErrorFormated("E000024")
+				return err //c.SendStatus(500)
 			}
 
 			// Updates certain properties of the JSON file
@@ -388,12 +351,13 @@ func main() {
 			client, err := mongo.Connect(ctx, clientOptions)
 			//client, err := mongo.Connect(context.TODO(), clientOptions)
 			if err != nil {
-				return errorFormated("E000025", c)
+				errorFunc.ErrorFormated("E000025")
+				return err //c.SendStatus(500)
 			}
 
 			// get collection as ref, the name of the database, then the name of the collection
 
-			collection := client.Database("test").Collection("JSONInfo")
+			collection := client.Database("slim-prediction").Collection("JSONInfo")
 
 			// Check if the files already exist
 			filter := bson.D{{Key: "parent_package_name", Value: fileNameOnly}}
@@ -402,16 +366,19 @@ func main() {
 				if err == mongo.ErrNoDocuments {
 					fmt.Println("Clear")
 				}
-				return errorFormated("E000026", c)
+				errorFunc.ErrorFormated(err.Error())
+				return err //c.SendStatus(500)
 			}
 			var results []JSONData
 			if err = cursor.All(context.TODO(), &results); err != nil {
-				return errorFormated("E000027", c)
+				errorFunc.ErrorFormated("E000027")
+				return err //c.SendStatus(500)
 			}
 			if len(results) > 0 {
 				err = os.RemoveAll("./output")
 				if err != nil {
-					return errorFormated("E000028", c)
+					errorFunc.ErrorFormated("E000028")
+					return err //c.SendStatus(500)
 				}
 				return c.SendString("File already exists!")
 			}
@@ -424,77 +391,74 @@ func main() {
 
 			_, err = collection.InsertMany(context.TODO(), newResults)
 			if err != nil {
-				return errorFormated("E000029", c)
+				errorFunc.ErrorFormated("E000029")
+				return err //c.SendStatus(500)
 			}
 
-			// Initialize a session.
-
-			sess, err := session.NewSessionWithOptions(session.Options{
-				Config: aws.Config{
-					Region: aws.String("eu-central-1"),
-				},
-			})
-			if err != nil {
-				return errorFormated("E000030", c)
-			}
-			s3Bucket := os.Getenv("S3_BUCKET")
-
-			// Initialize variables and upload images
-
-			path := "./output/" + fileNameOnly + "/img"
-			iter := NewDirectoryIterator(s3Bucket, path, "img")
-			uploader := s3manager.NewUploader(sess)
-
-			if err := uploader.UploadWithIterator(aws.BackgroundContext(), iter); err != nil {
-				return errorFormated("E000031", c)
-			}
-			fmt.Printf("Successfully uploaded %q to %q", path, s3Bucket)
-
-			// Initialize variables and upload psf
-
-			path = "./output/" + fileNameOnly + "/psf"
-			iter = NewDirectoryIterator(s3Bucket, path, "psf")
-			uploader = s3manager.NewUploader(sess)
-
-			if err := uploader.UploadWithIterator(aws.BackgroundContext(), iter); err != nil {
-				return errorFormated("E000032", c)
-			}
-			fmt.Printf("Successfully uploaded %q to %q", path, s3Bucket)
-
-			// Delete the created files
-			err = os.RemoveAll("./output")
-			if err != nil {
-				return errorFormated("E000028", c)
-			}
-
-			// Create a new instance of Message
-			message := Message{
-				UUID:     id.String(),
-				FileName: fileNameOnly,
-			}
-
-			// Marshal it into JSON prior to requesting
-			messageJSON, err := json.Marshal(message)
-			if err != nil {
-				return errorFormated("E000033", c)
-			}
+			// Initialize workers and chanels
+			bucket := os.Getenv("S3_TEST_BUCKET")
 			pythonServerURL := os.Getenv("PYTHON_SERVER_URL")
 
-			// Make request with marshalled JSON as the POST body
-			_, err = http.Post(pythonServerURL, "application/json",
-				bytes.NewBuffer(messageJSON))
-			if err != nil {
-				return errorFormated("E000034", c)
-			}
+			jobs := make(chan channeltypes.ImagePath, MAX_BUFFER)
+			resultsCh := make(chan channeltypes.Result, MAX_BUFFER)
 
-			return c.SendString("Finished")
+			// Iterate through the dir and get files for upload
+			for worker := 1; worker <= MAX_WORKERS; worker++ {
+				go awsupload.UploadDirToS3(bucket, jobs, resultsCh)
+
+			}
+			path := workingDir
+			fileList := []string{}
+
+			filepath.Walk(path, func(path string, info os.FileInfo, err error) error {
+				if !info.IsDir() && filepath.Ext(info.Name()) != ".json" {
+					fileList = append(fileList, path)
+				}
+				return nil
+			})
+			totalImageLen := len(fileList)
+			var uploadedList []channeltypes.Result
+
+			// Initialize variables and upload images
+			go func() {
+				for _, pathOfFile := range fileList {
+					jobs <- channeltypes.ImagePath{FilePath: pathOfFile}
+				}
+				close(jobs)
+			}()
+			go func() error {
+				for chItems := range resultsCh {
+					uploadedList = append(uploadedList, chItems)
+					if totalImageLen == len(uploadedList) {
+						elapsed := time.Since(start)
+						fmt.Printf("\nRequest took %f", elapsed.Seconds())
+						_, err := finishingFuncs.CleanUp(removeDir)
+						if err != nil {
+							fmt.Println(err)
+						}
+						_, err = finishingFuncs.ServerCommunication(id.String(), fileNameOnly, pythonServerURL)
+						if err != nil {
+							fmt.Println(err)
+						}
+
+						for i, requests := range requestsQueue {
+							if requests.id == id.String() {
+								requestsQueue[i].status = "Completed"
+							}
+						}
+					}
+				}
+				fmt.Println("Completed")
+				return nil
+			}()
+			c.SendString(id.String())
 		}
 		if choiceFlag == "newVersion" {
 			c.SendString("New Version")
 
 		}
 
-		return c.SendStatus(500)
+		return c.SendStatus(200)
 	})
 
 	defaultPort := "5000"
