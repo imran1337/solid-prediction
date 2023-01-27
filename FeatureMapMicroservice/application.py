@@ -45,6 +45,7 @@ def generateFeatureMapCreationTask(bucketName, content):
     count = 100
     for idx in range(0, len(lstS3Files), count):
         fileTuples.append((idx, min(idx + count, len(lstS3Files))))
+
     with ThreadPoolExecutor() as executor:
         args = []
         for fileChunkIdx in fileTuples:
@@ -115,6 +116,11 @@ def startFeatureMapMicroservice():
     dictUsers[id] = threadExecutor.submit(
         generateFeatureMapCreationTask, bucketName, content)
     return json.dumps({'id': id})
+
+
+@application.route("/", methods=['GET'])
+def index():
+    return 'Running'
 
 
 if __name__ == '__main__':

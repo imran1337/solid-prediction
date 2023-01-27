@@ -198,6 +198,10 @@ def getAnnoyIndexer(id):
     else:
         return json.dumps({'id': id, 'result': 'not started yet'})
 
+@application.route("/", methods=['GET'])
+def index():
+    return 'Running'
+
 @application.route("/remove-annoy-indexer/<id>", methods=['GET'])
 def removeAnnoyIndexer(id):
     if id in dictUsers and dictUsers[id].done():
