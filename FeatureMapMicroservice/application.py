@@ -106,5 +106,9 @@ def startFeatureMapMicroservice():
     dictUsers[id] = threadExecutor.submit(generateFeatureMapCreationTask, bucketName, content)
     return json.dumps({'id': id})
 
+@application.route("/", methods=['GET'])
+def index():
+    return 'Running'
+
 if __name__ == '__main__':
     application.run(debug=True, threaded=True)
