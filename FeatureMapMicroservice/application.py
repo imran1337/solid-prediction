@@ -15,6 +15,7 @@ application = Flask(__name__)
 
 # load_dotenv()
 
+
 def mongoConnect(osEnv, dbName, CollectionName):
     mongoURI = os.getenv(osEnv)
     myclient = pymongo.MongoClient(mongoURI)
@@ -22,9 +23,11 @@ def mongoConnect(osEnv, dbName, CollectionName):
     mycol = mydb[CollectionName]
     return mycol
 
+
 # Mongo Global vars
 DB_NAME = "test"
 COLLECTION_NAME = "JSONInfo"
+
 
 def generateFeatureMapCreationTask(bucketName, content):
     '''
@@ -42,12 +45,13 @@ def generateFeatureMapCreationTask(bucketName, content):
     count = 100
     for idx in range(0, len(lstS3Files), count):
         fileTuples.append((idx, min(idx + count, len(lstS3Files))))
-
     with ThreadPoolExecutor() as executor:
         args = []
         for fileChunkIdx in fileTuples:
-            args.append([bucketName, lstS3Files[fileChunkIdx[0]: fileChunkIdx[1]]])
+            args.append(
+                [bucketName, lstS3Files[fileChunkIdx[0]: fileChunkIdx[1]]])
         results = executor.map(generateFeatureMap, args)
+
 
 def generateFeatureMap(args):
     '''
@@ -73,11 +77,15 @@ def generateFeatureMap(args):
 
     for obj in package:
         awsImageBytes = obj.get()['Body'].read()
-        awsImageBytesFeatures = indexer.extract_single_feature(awsImageBytes, True)
-        fileName = obj.key.replace("img/", "featuremap/").rsplit('.', 1)[0] + ".bin"
-        s3Client.upload_fileobj(io.BytesIO(awsImageBytesFeatures.tobytes()), bucketName, fileName)
+        awsImageBytesFeatures = indexer.extract_single_feature(
+            awsImageBytes, True)
+        fileName = obj.key.replace(
+            "img/", "featuremap/").rsplit('.', 1)[0] + ".bin"
+        s3Client.upload_fileobj(io.BytesIO(
+            awsImageBytesFeatures.tobytes()), bucketName, fileName)
 
     return True
+
 
 @application.route("/get-result/<id>", methods=['GET'])
 def getResult(id):
@@ -87,9 +95,9 @@ def getResult(id):
     :return: JSON of the current state
     '''
     if id not in dictUsers:
-        return json.dumps({'id': id, 'result' : 2, 'desc': 'id unknown'})
+        return json.dumps({'id': id, 'result': 2, 'desc': 'id unknown'})
     if dictUsers[id].running():
-        return json.dumps({'id': id, 'result' : 1, 'desc': 'running'})
+        return json.dumps({'id': id, 'result': 1, 'desc': 'running'})
     elif dictUsers[id].cancelled():
         return json.dumps({'id': id, 'result': 3, 'desc': 'cancelled'})
     elif dictUsers[id].done():
@@ -98,13 +106,16 @@ def getResult(id):
     else:
         return json.dumps({'id': id, 'result': -1, 'desc': 'not started yet'})
 
+
 @application.route("/set-feature-maps", methods=['POST'])
 def startFeatureMapMicroservice():
     content = request.json
     bucketName = os.getenv("S3_BUCKET")
     id = str(uuid.uuid4())
-    dictUsers[id] = threadExecutor.submit(generateFeatureMapCreationTask, bucketName, content)
+    dictUsers[id] = threadExecutor.submit(
+        generateFeatureMapCreationTask, bucketName, content)
     return json.dumps({'id': id})
+
 
 if __name__ == '__main__':
     application.run(debug=True, threaded=True)

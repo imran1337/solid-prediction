@@ -1,4 +1,4 @@
-module encryptor
+module uploadfilesmicroservice
 
 go 1.19
 
