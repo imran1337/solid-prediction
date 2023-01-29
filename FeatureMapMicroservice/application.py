@@ -113,8 +113,7 @@ def startFeatureMapMicroservice():
     content = request.json
     bucketName = os.getenv("S3_BUCKET")
     id = content['UUID']
-    dictUsers[id] = threadExecutor.submit(
-        generateFeatureMapCreationTask, bucketName, content)
+    dictUsers[id] = threadExecutor.submit(generateFeatureMapCreationTask, bucketName, content)
     return json.dumps({'id': id})
 
 
