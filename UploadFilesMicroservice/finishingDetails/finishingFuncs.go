@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"os"
-	errorFunc "uploadfilesmicroservice/errorHandler"
 )
 
 type Message struct {
@@ -13,12 +12,12 @@ type Message struct {
 	FileName string
 }
 
-func CleanUp(dir string) (message string, errLog error) {
+func CleanUp(dir string) (errLog error) {
 	err := os.RemoveAll(dir + "/")
 	if err != nil {
-		return errorFunc.ErrorFormated("E000028"), err
+		return err
 	}
-	return "Completed", nil
+	return nil
 }
 
 func ServerCommunication(id string, filename string, receiver string) (message string, errLog error) {
@@ -31,14 +30,14 @@ func ServerCommunication(id string, filename string, receiver string) (message s
 	// Marshal it into JSON prior to requesting
 	messageJSON, err := json.Marshal(responseMessage)
 	if err != nil {
-		return errorFunc.ErrorFormated("E000033"), err
+		return "E000033", err
 	}
 
 	// Make request with marshalled JSON as the POST body
 	_, err = http.Post(receiver, "application/json",
 		bytes.NewBuffer(messageJSON))
 	if err != nil {
-		return errorFunc.ErrorFormated("E000034"), err
+		return "E000034", err
 	}
 	return "Completed", nil
 }

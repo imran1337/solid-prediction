@@ -5,20 +5,20 @@ import (
 	"os"
 	"path/filepath"
 
-	channeltypes "uploadfilesmicroservice/typeDef"
+	typeDef "uploadfilesmicroservice/typeDef"
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/s3/s3manager"
 )
 
-func UploadDirToS3(bucket string, jobs <-chan channeltypes.ImagePath, results chan<- channeltypes.Result) {
+func UploadDirToS3(bucket string, jobs <-chan typeDef.ImagePath, results chan<- typeDef.Result) {
 	for imgPath := range jobs {
 		loc, err := putInS3(imgPath.FilePath, bucket)
 		if err != nil {
 			fmt.Println(err.Error())
 		}
-		results <- channeltypes.Result{ReturnMessage: loc}
+		results <- typeDef.Result{ReturnMessage: loc}
 	}
 }
 

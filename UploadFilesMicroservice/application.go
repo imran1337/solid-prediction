@@ -18,7 +18,8 @@ import (
 	awsupload "uploadfilesmicroservice/awsCode"
 	errorFunc "uploadfilesmicroservice/errorHandler"
 	finishingFuncs "uploadfilesmicroservice/finishingDetails"
-	channeltypes "uploadfilesmicroservice/typeDef"
+	mongocode "uploadfilesmicroservice/mongoCode"
+	typeDef "uploadfilesmicroservice/typeDef"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/cors"
@@ -26,7 +27,6 @@ import (
 	"github.com/joho/godotenv"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
-	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
 type JSONData struct {
@@ -61,16 +61,9 @@ type JSONData struct {
 	User                string
 }
 
-type requestInfo struct {
-	id     string
-	status string // "Completed", "Not Completed"
-}
-
-var requestsQueue []requestInfo
-
 func main() {
 	// This needs to be changed when the server goes to production.
-	prod := true
+	prod := false
 
 	if !prod {
 		err := godotenv.Load()
@@ -91,18 +84,29 @@ func main() {
 
 	MAX_WORKERS := 10
 	MAX_BUFFER := 10
-
+	app.Get("/", func(c *fiber.Ctx) error { return c.SendStatus(200) })
 	app.Post("/send/:flag", func(c *fiber.Ctx) error {
 		choiceFlag := c.Params("flag")
 
 		// Creates UUID
 		id := uuid.New()
 
+		// Set Mongo and the request struct
+		mongoDBURI := os.Getenv("MONGODB_URI")
+		mongoDB := os.Getenv("MONGO_DB")
+		mongoInfo := &typeDef.MongoParts{MongoURI: mongoDBURI, MongoDBName: mongoDB, MongoCollectionName: "JSONInfo"}
+
+		newRequest := &typeDef.RequestInfo{
+			Id:          id.String(),
+			Status:      "Not Completed",
+			ErrComplete: "none",
+			ErrCode:     "none",
+		}
 		// Receives all the header + file
 		fileFromPost, err := c.FormFile("File")
 		if err != nil {
-			errorFunc.ErrorFormated("E000001")
-			return err //c.SendStatus(500)
+			c.SendString("Error, ask the admin to check the id:" + id.String())
+			return c.SendStatus(errorFunc.ErrorFormated(newRequest, mongoInfo, "E000001", err.Error()))
 		}
 
 		fileName := fileFromPost.Filename
@@ -110,9 +114,9 @@ func main() {
 		fmt.Println(fileNameOnly)
 
 		// Check if the file is a zip file
-		if filepath.Ext(fileName) != ".zip" {
-			errorFunc.ErrorFormated("E000003")
-			return err //c.SendStatus(500)
+		if filepath.Ext(fileName) != ".smd" {
+			c.SendString("Error, ask the admin to check the id:" + id.String())
+			return c.SendStatus(errorFunc.ErrorFormated(newRequest, mongoInfo, "E000003", "Invalid Extension"))
 		}
 
 		// Normal flag is the usual branch the file follows, if it's a duplicate the front end will be notified, and a new branch will activate.
@@ -120,39 +124,44 @@ func main() {
 		if choiceFlag == "normal" {
 			start := time.Now()
 
-			newRequest := requestInfo{
-				id:     id.String(),
-				status: "Not Completed",
-			}
-			requestsQueue = append(requestsQueue, newRequest)
-
 			multiPartfile, err := fileFromPost.Open()
 			if err != nil {
-				errorFunc.ErrorFormated("E000002")
-				return err //c.SendStatus(500)
+				c.SendString("Error, ask the admin to check the id:" + id.String())
+
+				return c.SendStatus(errorFunc.ErrorFormated(newRequest, mongoInfo, "E000002", err.Error()))
 			}
 
 			defer multiPartfile.Close()
 
 			encryptedFile, err := io.ReadAll(multiPartfile)
 			if err != nil {
-				errorFunc.ErrorFormated("E000004")
-				return err //c.SendStatus(500)
+				c.SendString("Error, ask the admin to check the id:" + id.String())
+
+				return c.SendStatus(errorFunc.ErrorFormated(newRequest, mongoInfo, "E000004", err.Error()))
 			}
 
 			// Key 32 bytes length
-			key, _ := os.ReadFile("RandomNumbers")
+			key, err := os.ReadFile("./RandomNumbers")
+			if err != nil {
+				c.SendString("Error, ask the admin to check the id:" + id.String())
+
+				return c.SendStatus(errorFunc.ErrorFormated(newRequest, mongoInfo, "E000004", err.Error()))
+			}
+
+			//key, _ := os.ReadFile("RandomNumbers")
 			block, err := aes.NewCipher(key)
 			if err != nil {
-				errorFunc.ErrorFormated("E000005")
-				return err //c.SendStatus(500)
+				c.SendString("Error, ask the admin to check the id:" + id.String())
+
+				return c.SendStatus(errorFunc.ErrorFormated(newRequest, mongoInfo, "E000005", err.Error()))
 			}
 			// We are going to use the GCM mode, which is a stream mode with authentication.
 			// So we don’t have to worry about the padding or doing the authentication, since it is already done by the package.
 			gcm, err := cipher.NewGCM(block)
 			if err != nil {
-				errorFunc.ErrorFormated("E000006")
-				return err //c.SendStatus(500)
+				c.SendString("Error, ask the admin to check the id:" + id.String())
+
+				return c.SendStatus(errorFunc.ErrorFormated(newRequest, mongoInfo, "E000006", err.Error()))
 			}
 			// This mode requires a nonce array. It works like an IV.
 			// Make sure this is never the same value, that is, change it every time you will encrypt, even if it is the same file.
@@ -160,8 +169,9 @@ func main() {
 			// Never use more than 2^32 random nonces with a given key because of the risk of repeat.
 			nonce := make([]byte, gcm.NonceSize())
 			if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
-				errorFunc.ErrorFormated("E000007")
-				return err //c.SendStatus(500)
+				c.SendString("Error, ask the admin to check the id:" + id.String())
+
+				return c.SendStatus(errorFunc.ErrorFormated(newRequest, mongoInfo, "E000007", err.Error()))
 			}
 
 			// Removing the nonce
@@ -169,26 +179,31 @@ func main() {
 			encryptedFile = encryptedFile[gcm.NonceSize():]
 			decryptedFile, err := gcm.Open(nil, nonce2, encryptedFile, nil)
 			if err != nil {
-				errorFunc.ErrorFormated("E000008")
-				return err //c.SendStatus(500)
+				c.SendString("Error, ask the admin to check the id:" + id.String())
+
+				return c.SendStatus(errorFunc.ErrorFormated(newRequest, mongoInfo, "E000008", err.Error()))
 			}
-			err = os.WriteFile(fileName, decryptedFile, 0777)
+
+			err = os.WriteFile(fileNameOnly+".zip", decryptedFile, 0777)
 			if err != nil {
-				errorFunc.ErrorFormated("E000009")
-				return err //c.SendStatus(500)
+				c.SendString("Error, ask the admin to check the id:" + id.String())
+
+				return c.SendStatus(errorFunc.ErrorFormated(newRequest, mongoInfo, "E000009", err.Error()))
 			}
-			file, err := os.Open(fileName)
+			file, err := os.Open(fileNameOnly + ".zip")
 			if err != nil {
-				errorFunc.ErrorFormated("E000010")
-				return err //c.SendStatus(500)
+				c.SendString("Error, ask the admin to check the id:" + id.String())
+
+				return c.SendStatus(errorFunc.ErrorFormated(newRequest, mongoInfo, "E000010", err.Error()))
 			}
 
 			// Unzip to temp folder
 			dst := "output/" + id.String()
-			archive, err := zip.OpenReader(fileFromPost.Filename)
+			archive, err := zip.OpenReader(fileNameOnly + ".zip")
 			if err != nil {
-				errorFunc.ErrorFormated("E000011")
-				return err //c.SendStatus(500)
+				c.SendString("Error, ask the admin to check the id:" + id.String())
+
+				return c.SendStatus(errorFunc.ErrorFormated(newRequest, mongoInfo, "E000011", err.Error()))
 			}
 
 			imgFolderExists := false
@@ -209,11 +224,13 @@ func main() {
 				file.Close()
 				err = os.Remove("./" + fileName)
 				if err != nil {
-					errorFunc.ErrorFormated("E000012")
-					return err //c.SendStatus(500)
+					c.SendString("Error, ask the admin to check the id:" + id.String())
+
+					return c.SendStatus(errorFunc.ErrorFormated(newRequest, mongoInfo, "E000012", err.Error()))
 				}
-				c.SendString("E000013")
-				return err //c.SendStatus(500)
+				c.SendString("Error, ask the admin to check the id:" + id.String())
+
+				return c.SendStatus(errorFunc.ErrorFormated(newRequest, mongoInfo, "E000013", err.Error()))
 			}
 
 			for _, f := range archive.File {
@@ -228,25 +245,29 @@ func main() {
 					continue
 				}
 				if err := os.MkdirAll(filepath.Dir(filePath), os.ModePerm); err != nil {
-					errorFunc.ErrorFormated("E000014")
-					return err //c.SendStatus(500)
+					c.SendString("Error, ask the admin to check the id:" + id.String())
+
+					return c.SendStatus(errorFunc.ErrorFormated(newRequest, mongoInfo, "E000014", err.Error()))
 				}
 
 				dstFile, err := os.OpenFile(filePath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, f.Mode())
 				if err != nil {
-					errorFunc.ErrorFormated("E000015")
-					return err //c.SendStatus(500)
+					c.SendString("Error, ask the admin to check the id:" + id.String())
+
+					return c.SendStatus(errorFunc.ErrorFormated(newRequest, mongoInfo, "E000015", err.Error()))
 				}
 
 				fileInArchive, err := f.Open()
 				if err != nil {
-					errorFunc.ErrorFormated("E000016")
-					return err //c.SendStatus(500)
+					c.SendString("Error, ask the admin to check the id:" + id.String())
+
+					return c.SendStatus(errorFunc.ErrorFormated(newRequest, mongoInfo, "E000016", err.Error()))
 				}
 
 				if _, err := io.Copy(dstFile, fileInArchive); err != nil {
-					errorFunc.ErrorFormated("E000017")
-					return err //c.SendStatus(500)
+					c.SendString("Error, ask the admin to check the id:" + id.String())
+
+					return c.SendStatus(errorFunc.ErrorFormated(newRequest, mongoInfo, "E000017", err.Error()))
 				}
 				dstFile.Close()
 				fileInArchive.Close()
@@ -254,6 +275,7 @@ func main() {
 			}
 			archive.Close()
 			file.Close()
+
 			workingDir := strings.Join([]string{"./output", id.String(), fileNameOnly}, "/")
 			removeDir := strings.Join([]string{"./output", id.String()}, "/")
 
@@ -261,16 +283,17 @@ func main() {
 			imgBaseDir := workingDir + "/img/"
 			imgDir, err := os.ReadDir(imgBaseDir)
 			if err != nil {
-				errorFunc.ErrorFormated("E000018")
-				return err //c.SendStatus(500)
+				c.SendString("Error, ask the admin to check the id:" + id.String())
+				return c.SendStatus(errorFunc.ErrorFormated(newRequest, mongoInfo, "E000018", err.Error()))
 			}
 			for i := range imgDir {
 				singleImageCurrentDir := imgBaseDir + imgDir[i].Name()
 				singleImageNewDir := imgBaseDir + id.String() + imgDir[i].Name()
 				err = os.Rename(singleImageCurrentDir, singleImageNewDir)
 				if err != nil {
-					errorFunc.ErrorFormated("E000019")
-					return err //c.SendStatus(500)
+					c.SendString("Error, ask the admin to check the id:" + id.String())
+
+					return c.SendStatus(errorFunc.ErrorFormated(newRequest, mongoInfo, "E000019", err.Error()))
 				}
 			}
 
@@ -278,30 +301,34 @@ func main() {
 			psfBaseDir := workingDir + "/psf/"
 			psfDir, err := os.ReadDir(psfBaseDir)
 			if err != nil {
-				errorFunc.ErrorFormated("E000020")
-				return err //c.SendStatus(500)
+				c.SendString("Error, ask the admin to check the id:" + id.String())
+
+				return c.SendStatus(errorFunc.ErrorFormated(newRequest, mongoInfo, "E000020", err.Error()))
 			}
 			for i := range psfDir {
 				singlePsfCurrentDir := psfBaseDir + psfDir[i].Name()
 				singlePsfNewDir := psfBaseDir + id.String() + psfDir[i].Name()
 				err = os.Rename(singlePsfCurrentDir, singlePsfNewDir)
 				if err != nil {
-					errorFunc.ErrorFormated("E000021")
-					return err //c.SendStatus(500)
+					c.SendString("Error, ask the admin to check the id:" + id.String())
+
+					return c.SendStatus(errorFunc.ErrorFormated(newRequest, mongoInfo, "E000021", err.Error()))
 				}
 			}
 
 			// Eliminate the zip file
 			err = os.Remove("./" + fileName)
 			if err != nil {
-				errorFunc.ErrorFormated("E000012")
-				return err //c.SendStatus(500)
+				c.SendString("Error, ask the admin to check the id:" + id.String())
+
+				return c.SendStatus(errorFunc.ErrorFormated(newRequest, mongoInfo, "E000012", err.Error()))
 			}
 
 			JSONDir, err := os.ReadDir(workingDir)
 			if err != nil {
-				errorFunc.ErrorFormated("E000022")
-				return err //c.SendStatus(500)
+				c.SendString("Error, ask the admin to check the id:" + id.String())
+
+				return c.SendStatus(errorFunc.ErrorFormated(newRequest, mongoInfo, "E000022", err.Error()))
 			}
 			var JSONFile string
 			for _, JSONDirFile := range JSONDir {
@@ -314,15 +341,17 @@ func main() {
 			pathToJson := filepath.Join(workingDir, JSONFile)
 			byteValue, err := os.ReadFile(pathToJson)
 			if err != nil {
-				errorFunc.ErrorFormated("E000023")
-				return err //c.SendStatus(500)
+				c.SendString("Error, ask the admin to check the id:" + id.String())
+
+				return c.SendStatus(errorFunc.ErrorFormated(newRequest, mongoInfo, "E000023", err.Error()))
 			}
 
 			var result []JSONData
 			err = json.Unmarshal(byteValue, &result)
 			if err != nil {
-				errorFunc.ErrorFormated("E000024")
-				return err //c.SendStatus(500)
+				c.SendString("Error, ask the admin to check the id:" + id.String())
+
+				return c.SendStatus(errorFunc.ErrorFormated(newRequest, mongoInfo, "E000024", err.Error()))
 			}
 
 			// Updates certain properties of the JSON file
@@ -340,24 +369,13 @@ func main() {
 
 			// Connect to database
 			// Set client options, the string is the connection to the mongo uri
-			mongoDBURI := os.Getenv("MONGODB_URI")
-			serverAPIOptions := options.ServerAPI(options.ServerAPIVersion1)
-			clientOptions := options.Client().ApplyURI(mongoDBURI).SetServerAPIOptions(serverAPIOptions)
 
-			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-			defer cancel()
-
-			// Connect to MongoDB
-			client, err := mongo.Connect(ctx, clientOptions)
-			//client, err := mongo.Connect(context.TODO(), clientOptions)
+			collection, err := mongocode.ConnectToMongoAtlas(mongoInfo)
 			if err != nil {
-				errorFunc.ErrorFormated("E000025")
-				return err //c.SendStatus(500)
+				c.SendString("Error, ask the admin to check the id:" + id.String())
+
+				return c.SendStatus(errorFunc.ErrorFormated(newRequest, mongoInfo, "E000025", err.Error()))
 			}
-
-			// get collection as ref, the name of the database, then the name of the collection
-
-			collection := client.Database("slim-prediction").Collection("JSONInfo")
 
 			// Check if the files already exist
 			filter := bson.D{{Key: "parent_package_name", Value: fileNameOnly}}
@@ -366,19 +384,20 @@ func main() {
 				if err == mongo.ErrNoDocuments {
 					fmt.Println("Clear")
 				}
-				errorFunc.ErrorFormated(err.Error())
-				return err //c.SendStatus(500)
+				c.SendString("Error, ask the admin to check the id:" + id.String())
+
+				return c.SendStatus(errorFunc.ErrorFormated(newRequest, mongoInfo, "E000026", err.Error()))
 			}
 			var results []JSONData
 			if err = cursor.All(context.TODO(), &results); err != nil {
-				errorFunc.ErrorFormated("E000027")
-				return err //c.SendStatus(500)
+				c.SendString("Error, ask the admin to check the id:" + id.String())
+				return c.SendStatus(errorFunc.ErrorFormated(newRequest, mongoInfo, "E000027", err.Error()))
 			}
 			if len(results) > 0 {
-				err = os.RemoveAll("./output")
+				finishingFuncs.CleanUp(removeDir)
 				if err != nil {
-					errorFunc.ErrorFormated("E000028")
-					return err //c.SendStatus(500)
+					c.SendString("Error, ask the admin to check the id:" + id.String())
+					return c.SendStatus(errorFunc.ErrorFormated(newRequest, mongoInfo, "E000028", err.Error()))
 				}
 				return c.SendString("File already exists!")
 			}
@@ -391,16 +410,16 @@ func main() {
 
 			_, err = collection.InsertMany(context.TODO(), newResults)
 			if err != nil {
-				errorFunc.ErrorFormated("E000029")
-				return err //c.SendStatus(500)
+				c.SendString("Error, ask the admin to check the id:" + id.String())
+				return c.SendStatus(errorFunc.ErrorFormated(newRequest, mongoInfo, "E000029", err.Error()))
 			}
 
 			// Initialize workers and chanels
 			bucket := os.Getenv("S3_BUCKET")
 			pythonServerURL := os.Getenv("PYTHON_SERVER_URL")
 
-			jobs := make(chan channeltypes.ImagePath, MAX_BUFFER)
-			resultsCh := make(chan channeltypes.Result, MAX_BUFFER)
+			jobs := make(chan typeDef.ImagePath, MAX_BUFFER)
+			resultsCh := make(chan typeDef.Result, MAX_BUFFER)
 
 			// Iterate through the dir and get files for upload
 			for worker := 1; worker <= MAX_WORKERS; worker++ {
@@ -417,12 +436,12 @@ func main() {
 				return nil
 			})
 			totalImageLen := len(fileList)
-			var uploadedList []channeltypes.Result
+			var uploadedList []typeDef.Result
 
 			// Initialize variables and upload images
 			go func() {
 				for _, pathOfFile := range fileList {
-					jobs <- channeltypes.ImagePath{FilePath: pathOfFile}
+					jobs <- typeDef.ImagePath{FilePath: pathOfFile}
 				}
 				close(jobs)
 			}()
@@ -432,25 +451,30 @@ func main() {
 					if totalImageLen == len(uploadedList) {
 						elapsed := time.Since(start)
 						fmt.Printf("\nRequest took %f", elapsed.Seconds())
-						_, err := finishingFuncs.CleanUp(removeDir)
+						err := finishingFuncs.CleanUp(removeDir)
 						if err != nil {
-							fmt.Println(err)
-						}
-						_, err = finishingFuncs.ServerCommunication(id.String(), fileNameOnly, pythonServerURL)
-						if err != nil {
-							fmt.Println(err)
-						}
+							c.SendString("Error, ask the admin to check the id:" + id.String())
+							return c.SendStatus(errorFunc.ErrorFormated(newRequest, mongoInfo, "E000028", err.Error()))
 
-						for i, requests := range requestsQueue {
-							if requests.id == id.String() {
-								requestsQueue[i].status = "Completed"
-							}
 						}
+						errMsg, err := finishingFuncs.ServerCommunication(id.String(), fileNameOnly, pythonServerURL)
+						if err != nil {
+							c.SendString("Error, ask the admin to check the id:" + id.String())
+							return c.SendStatus(errorFunc.ErrorFormated(newRequest, mongoInfo, errMsg, err.Error()))
+						}
+						// TODO: I have to make a mongo call here and send the information. I need to use the newRequest.
+						/*
+							for i, requests := range typeDef.RequestInfo {
+								if requests.Id == id.String() {
+									requestsQueue[i].Status = "Completed"
+								}
+							}*/
 					}
 				}
 				fmt.Println("Completed")
 				return nil
 			}()
+
 			c.SendString(id.String())
 		}
 		if choiceFlag == "newVersion" {
