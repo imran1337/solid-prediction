@@ -10,7 +10,7 @@ type Result struct {
 
 type RequestInfo struct {
 	Id          string
-	Status      string // "Completed", "Not Completed"
+	Status      string // "Completed", "Not Completed", "Error"
 	ErrComplete string
 	ErrCode     string
 }

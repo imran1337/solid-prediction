@@ -25,6 +25,7 @@ import (
 	"github.com/gofiber/fiber/v2/middleware/cors"
 	"github.com/google/uuid"
 	"github.com/joho/godotenv"
+	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
 )
 
@@ -128,7 +129,7 @@ func main() {
 		fmt.Println(fileNameOnly)
 
 		// Check if the file is a zip file
-		if filepath.Ext(fileName) != ".smd" {
+		if filepath.Ext(fileName) != ".zip" {
 			c.SendString("Error, ask the admin to check the id:" + id.String())
 			return c.SendStatus(errorFunc.ErrorFormated(newRequest, mongoInfo, "E000003", "Invalid Extension"))
 		}
@@ -464,21 +465,31 @@ func main() {
 							return c.SendStatus(errorFunc.ErrorFormated(newRequest, mongoInfo, "E000028", err.Error()))
 
 						}
-						errMsg, err := finishingFuncs.ServerCommunication(id.String(), fileNameOnly, pythonServerURL)
+						collection, err := mongocode.ConnectToMongoAtlas(mongoInfo, "requestStatus")
 						if err != nil {
 							c.SendString("Error, ask the admin to check the id:" + id.String())
-							return c.SendStatus(errorFunc.ErrorFormated(newRequest, mongoInfo, errMsg, err.Error()))
+							return c.SendStatus(errorFunc.ErrorFormated(newRequest, mongoInfo, "E000025", err.Error()))
 						}
-						// TODO: I have to make a mongo call here and send the information. I need to use the newRequest.
-						/*
-							for i, requests := range typeDef.RequestInfo {
-								if requests.Id == id.String() {
-									requestsQueue[i].Status = "Completed"
-								}
-							}*/
+						filter := bson.D{{Key: "id", Value: newRequest.Id}}
+						if err != nil {
+							c.SendString("Error, ask the admin to check the id:" + id.String())
+							return c.SendStatus(errorFunc.ErrorFormated(newRequest, mongoInfo, "E000026", err.Error()))
+						}
+						newRequest.Status = "Completed"
+						_, err = collection.ReplaceOne(context.TODO(), filter, newRequest)
+						if err != nil {
+							c.SendString("Error, ask the admin to check the id:" + id.String())
+							return c.SendStatus(errorFunc.ErrorFormated(newRequest, mongoInfo, "E000029", err.Error()))
+						}
+						errMsg, err := finishingFuncs.ServerCommunication(id.String(), fileNameOnly, pythonServerURL)
+						if err != nil {
+							errorFunc.ErrorFormated(newRequest, mongoInfo, errMsg, err.Error())
+							return fmt.Errorf("failed to communicate with the python server")
+						}
+
 					}
 				}
-				fmt.Println("Completed")
+				fmt.Println("Completed" + id.String())
 				return nil
 			}()
 
@@ -515,8 +526,11 @@ func main() {
 			c.SendString("We encoutered the error E000027, please speak with the server administrator.")
 			return c.SendStatus(500)
 		}
-
-		if len(results[0].ErrCode) > 0 {
+		if len(results) == 0 {
+			c.SendString("We didn't find your ID.")
+			return c.SendStatus(500)
+		}
+		if results[0].Status == "Error" {
 			return c.SendString(fmt.Sprintf("The id: %s, is %s, with the error code: %s", results[0].Id, results[0].Status, results[0].ErrCode))
 		}
 

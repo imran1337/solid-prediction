@@ -10,10 +10,9 @@ import (
 )
 
 func ErrorFormated(requestInfo *typeDef.RequestInfo, mongoInfo *typeDef.MongoParts, errCode string, ErrComplete string) (status int) {
-	fmt.Println(requestInfo, mongoInfo)
-	fmt.Println(mongoInfo)
 	requestInfo.ErrCode = errCode
 	requestInfo.ErrComplete = ErrComplete
+	requestInfo.Status = "Error"
 	collection, err := mongocode.ConnectToMongoAtlas(mongoInfo, "requestStatus")
 	filter := bson.D{{Key: "id", Value: requestInfo.Id}}
 	// If we get an error on the error func we have no fallback.
