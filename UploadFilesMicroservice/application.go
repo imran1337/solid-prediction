@@ -25,7 +25,6 @@ import (
 	"github.com/gofiber/fiber/v2/middleware/cors"
 	"github.com/google/uuid"
 	"github.com/joho/godotenv"
-	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
 )
 
@@ -84,6 +83,8 @@ func main() {
 
 	MAX_WORKERS := 10
 	MAX_BUFFER := 10
+	mongoDBURI := os.Getenv("MONGODB_URI")
+	mongoDB := os.Getenv("MONGO_DB")
 	app.Get("/", func(c *fiber.Ctx) error { return c.SendStatus(200) })
 	app.Post("/send/:flag", func(c *fiber.Ctx) error {
 		choiceFlag := c.Params("flag")
@@ -92,15 +93,28 @@ func main() {
 		id := uuid.New()
 
 		// Set Mongo and the request struct
-		mongoDBURI := os.Getenv("MONGODB_URI")
-		mongoDB := os.Getenv("MONGO_DB")
-		mongoInfo := &typeDef.MongoParts{MongoURI: mongoDBURI, MongoDBName: mongoDB, MongoCollectionName: "JSONInfo"}
+
+		mongoInfo := &typeDef.MongoParts{MongoURI: mongoDBURI, MongoDBName: mongoDB}
 
 		newRequest := &typeDef.RequestInfo{
 			Id:          id.String(),
 			Status:      "Not Completed",
 			ErrComplete: "none",
 			ErrCode:     "none",
+		}
+
+		// Connect to database
+		// Set client options, the string is the connection to the mongo uri
+		collection, err := mongocode.ConnectToMongoAtlas(mongoInfo, "requestStatus")
+		if err != nil {
+			c.SendString("Error, ask the admin to check the id:" + id.String())
+			return c.SendStatus(errorFunc.ErrorFormated(newRequest, mongoInfo, "E000025", err.Error()))
+		}
+		// Insert the first instance of the request. While it is being processed the user can consult it later.
+		_, err = collection.InsertOne(context.TODO(), newRequest)
+		if err != nil {
+			c.SendString("Error, ask the admin to check the id:" + id.String())
+			return c.SendStatus(errorFunc.ErrorFormated(newRequest, mongoInfo, "E000029", err.Error()))
 		}
 		// Receives all the header + file
 		fileFromPost, err := c.FormFile("File")
@@ -367,25 +381,18 @@ func main() {
 				result[iStruct].User = "dmelim@unevis.de"
 			}
 
-			// Connect to database
-			// Set client options, the string is the connection to the mongo uri
-
-			collection, err := mongocode.ConnectToMongoAtlas(mongoInfo)
+			// Check if the files already exist
+			collection, err = mongocode.ConnectToMongoAtlas(mongoInfo, "JSONInfo")
 			if err != nil {
 				c.SendString("Error, ask the admin to check the id:" + id.String())
-
 				return c.SendStatus(errorFunc.ErrorFormated(newRequest, mongoInfo, "E000025", err.Error()))
 			}
-
-			// Check if the files already exist
-			filter := bson.D{{Key: "parent_package_name", Value: fileNameOnly}}
-			cursor, err := collection.Find(context.TODO(), filter)
+			cursor, err := mongocode.SearchMongo("parent_package_name", fileNameOnly, collection)
 			if err != nil {
 				if err == mongo.ErrNoDocuments {
 					fmt.Println("Clear")
 				}
 				c.SendString("Error, ask the admin to check the id:" + id.String())
-
 				return c.SendStatus(errorFunc.ErrorFormated(newRequest, mongoInfo, "E000026", err.Error()))
 			}
 			var results []JSONData
@@ -483,6 +490,37 @@ func main() {
 		}
 
 		return c.SendStatus(200)
+	})
+	app.Get("/:id", func(c *fiber.Ctx) error {
+		mongoInfo := &typeDef.MongoParts{MongoURI: mongoDBURI, MongoDBName: mongoDB}
+		requestId := c.Params("id")
+		collection, err := mongocode.ConnectToMongoAtlas(mongoInfo, "requestStatus")
+		if err != nil {
+			fmt.Println(err)
+			c.SendString("We encoutered the error E000025, please speak with the server administrator.")
+			return c.SendStatus(500)
+		}
+		cursor, err := mongocode.SearchMongo("id", requestId, collection)
+		if err != nil {
+			if err == mongo.ErrNoDocuments {
+				c.SendString("We didn't find your ID.")
+				return c.SendStatus(500)
+			}
+			fmt.Println(err)
+			c.SendString("We encoutered the error E000026, please speak with the server administrator.")
+			return c.SendStatus(500)
+		}
+		var results []typeDef.RequestInfo
+		if err = cursor.All(context.TODO(), &results); err != nil {
+			c.SendString("We encoutered the error E000027, please speak with the server administrator.")
+			return c.SendStatus(500)
+		}
+
+		if len(results[0].ErrCode) > 0 {
+			return c.SendString(fmt.Sprintf("The id: %s, is %s, with the error code: %s", results[0].Id, results[0].Status, results[0].ErrCode))
+		}
+
+		return c.SendString(fmt.Sprintf("The id: %s, is %s.", results[0].Id, results[0].Status))
 	})
 
 	defaultPort := "5000"

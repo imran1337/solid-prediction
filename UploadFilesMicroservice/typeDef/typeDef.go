@@ -16,7 +16,6 @@ type RequestInfo struct {
 }
 
 type MongoParts struct {
-	MongoURI            string
-	MongoDBName         string
-	MongoCollectionName string
+	MongoURI    string
+	MongoDBName string
 }
