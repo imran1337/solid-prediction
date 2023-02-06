@@ -8,6 +8,7 @@ import uuid
 import json
 from featureMap import Index
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime
 
 threadExecutor = ThreadPoolExecutor(1)
 dictUsers = {}
@@ -22,6 +23,13 @@ def mongoConnect(osEnv, dbName, CollectionName):
     mydb = myclient[dbName]
     mycol = mydb[CollectionName]
     return mycol
+
+
+def mongoReplace(id, errorMessage):
+    collection = mongoConnect(
+        "MONGODB_URI", "slim-prediction", "featureMapErrors")
+    collection.replace_one(
+        {"id": id}, {"id": id, "error": errorMessage, "timestamp": datetime.now()})
 
 
 # Mongo Global vars
@@ -50,7 +58,7 @@ def generateFeatureMapCreationTask(bucketName, content):
         args = []
         for fileChunkIdx in fileTuples:
             args.append(
-                [bucketName, lstS3Files[fileChunkIdx[0]: fileChunkIdx[1]]])
+                [bucketName, lstS3Files[fileChunkIdx[0]: fileChunkIdx[1]], content['UUID']])
         results = executor.map(generateFeatureMap, args)
 
 
@@ -65,6 +73,7 @@ def generateFeatureMap(args):
 
     bucketName = args[0]
     package = args[1]
+    id = args[2]
 
     failed = False
     while failed == False:
@@ -72,19 +81,33 @@ def generateFeatureMap(args):
             s3Client = boto3.client('s3')
             failed = True
         except Exception as error:
-            print(error)
+            mongoReplace(id, "Failed to connect to aws.")
             time.sleep(0.5)
             pass
 
     for obj in package:
-        awsImageBytes = obj.get()['Body'].read()
-        awsImageBytesFeatures = indexer.extract_single_feature(
-            awsImageBytes, True)
+        try:
+            awsImageBytes = obj.get()['Body'].read()  # try except here
+        except Exception as error:
+            mongoReplace(id, "Failed to get the Body of the s3 object.")
+            print(error)
+            break
+        try:
+            awsImageBytesFeatures = indexer.extract_single_feature(  # try except here
+                awsImageBytes, True)
+        except Exception as error:
+            mongoReplace(id, "Failed to extract the single feature.")
+            print(error)
+            break
         fileName = obj.key.replace(
             "img/", "featuremap/").rsplit('.', 1)[0] + ".bin"
-        s3Client.upload_fileobj(io.BytesIO(
-            awsImageBytesFeatures.tobytes()), bucketName, fileName)
-
+        try:
+            s3Client.upload_fileobj(io.BytesIO(  # try except here
+                awsImageBytesFeatures.tobytes()), bucketName, fileName)
+        except Exception as error:
+            mongoReplace(id, "Failed to upload feature map to aws.")
+            print(error)
+            break
     return True
 
 
@@ -113,11 +136,16 @@ def startFeatureMapMicroservice():
     content = request.json
     bucketName = os.getenv("S3_BUCKET")
     id = content['UUID']
-    dictUsers[id] = threadExecutor.submit(generateFeatureMapCreationTask, bucketName, content)
+    dictUsers[id] = threadExecutor.submit(
+        generateFeatureMapCreationTask, bucketName, content)
+
+    collection = mongoConnect(
+        "MONGODB_URI", "slim-prediction", "featureMapErrors")
+    collection.insert_one({"id": id, "error": "", "timestamp": datetime.now()})
     return json.dumps({'id': id})
 
 
-@application.route("/", methods=['GET'])
+@ application.route("/", methods=['GET'])
 def index():
     return 'Running'
 

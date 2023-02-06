@@ -14,7 +14,9 @@ import json
 import zipfile
 import uuid
 import shutil
-import base64, hashlib
+import base64
+import hashlib
+from datetime import datetime
 
 threadExecutor = ThreadPoolExecutor(2)
 dictUsers = {}
@@ -31,12 +33,21 @@ if environment == 'dev':
     import dotenv
     dotenv.load_dotenv()
 
+
 def mongoConnect(osEnv, dbName, CollectionName):
     mongoURI = os.getenv(osEnv)
     myclient = pymongo.MongoClient(mongoURI)
     mydb = myclient[dbName]
     mycol = mydb[CollectionName]
     return mycol
+
+
+def mongoReplace(id, errorMessage):
+    collection = mongoConnect(
+        "MONGODB_URI", "slim-prediction", "featureMapErrors")
+    collection.replace_one(
+        {"id": id}, {"id": id, "error": errorMessage, "timestamp": datetime.now()})
+
 
 def startIndexing(image_data, indexerPath, vendor, category):
     if not os.path.exists(indexerPath):
@@ -49,13 +60,14 @@ def startIndexing(image_data, indexerPath, vendor, category):
         t.add_item(i, v)
         # print(t, i, v)
     t.build(100)  # 100 trees
-    t.save(os.path.join(indexerPath, vendor  + '_' + category + '_fvecs.ann'))
+    t.save(os.path.join(indexerPath, vendor + '_' + category + '_fvecs.ann'))
+
 
 def downloadPackage(args):
     bucketName = args[0]
     package = args[1]
     subTaskId = args[2]
-    #connect to s3
+    # connect to s3
 
     failed = False
     while failed == False:
@@ -66,7 +78,7 @@ def downloadPackage(args):
             print(error)
             time.sleep(0.5)
             pass
-    #download from the specified bucket and key
+    # download from the specified bucket and key
     result = []
     idx = 0
     featureLen = 0
@@ -79,14 +91,15 @@ def downloadPackage(args):
         # Append images to an array. And buffer them.
         awsImageBytes = awsImage.get()['Body'].read()
         arrNumpy = numpy.frombuffer(awsImageBytes, dtype=numpy.float32)
-        #print(featureFile, idx, len(featureFiles))
+        # print(featureFile, idx, len(featureFiles))
         result.append(arrNumpy)
         if idx == 0:
-            featureLen = len (arrNumpy)
-            #imagesDict['length'] = len(arrNumpy)
+            featureLen = len(arrNumpy)
+            # imagesDict['length'] = len(arrNumpy)
             idx += 1
 
     return [result, featureLen, subTaskId]
+
 
 def generateAnnoyIndexerTask(currentPath, vendor, category, generatedUUID):
     # Init AWS
@@ -97,7 +110,8 @@ def generateAnnoyIndexerTask(currentPath, vendor, category, generatedUUID):
     temp = []
 
     # Check MongoDB to see if the JSON files have a PSF File
-    mypsfquery = {"psf_file_name": {"$exists": True}, "vendor": vendor, 'category': category}
+    mypsfquery = {"psf_file_name": {"$exists": True},
+                  "vendor": vendor, 'category': category}
     mydoc = mycol.find(mypsfquery, {"image_file_names": 1})
 
     for x in mydoc:
@@ -121,7 +135,8 @@ def generateAnnoyIndexerTask(currentPath, vendor, category, generatedUUID):
     with ThreadPoolExecutor() as executor:
         args = []
         for fileChunkIdx in fileTuples:
-            args.append([bucketName, featureFiles[fileChunkIdx[0]: fileChunkIdx[1]], subTaskId])
+            args.append(
+                [bucketName, featureFiles[fileChunkIdx[0]: fileChunkIdx[1]], subTaskId])
             subTaskId += 1
         results = executor.map(downloadPackage, args)
 
@@ -142,11 +157,13 @@ def generateAnnoyIndexerTask(currentPath, vendor, category, generatedUUID):
         currentPath, downloadLocation, generatedUUID)
     print('Start Indexing')
     startIndexing(df, downloadTotalPath, vendor, category)
-    indexerPath = os.path.join(downloadTotalPath, vendor + '_' + category + '_fvecs.ann')
+    indexerPath = os.path.join(
+        downloadTotalPath, vendor + '_' + category + '_fvecs.ann')
 
     # Create JSON File
     json_object = json.dumps(imagesDict, indent=4)
-    jsonPath = os.path.join(downloadTotalPath, vendor + '_' + category + "_info.json")
+    jsonPath = os.path.join(downloadTotalPath, vendor +
+                            '_' + category + "_info.json")
 
     print('Write output')
     with open(jsonPath, "w") as outfile:
@@ -166,11 +183,13 @@ def generateAnnoyIndexerTask(currentPath, vendor, category, generatedUUID):
 
     return zipLocation
 
+
 def generateFernetKey(passcode):
     assert isinstance(passcode, bytes)
     hlib = hashlib.md5()
     hlib.update(passcode)
     return base64.urlsafe_b64encode(hlib.hexdigest().encode('latin-1'))
+
 
 def encryptMessage(key, msg):
     encoded_key = generateFernetKey(key.encode('utf-8'))
@@ -179,18 +198,24 @@ def encryptMessage(key, msg):
     treatment = handler.encrypt(encoded_msg)
     return str(treatment, 'utf-8')
 
+
 @application.route("/annoy-indexer-setup/<vendor>/<cat>", methods=['GET'])
 def annoyIndexer(vendor, cat):
     id = str(uuid.uuid4())
-    dictUsers[id] = threadExecutor.submit(generateAnnoyIndexerTask, current_app.root_path, vendor, cat, id)
+    dictUsers[id] = threadExecutor.submit(
+        generateAnnoyIndexerTask, current_app.root_path, vendor, cat, id)
+    collection = mongoConnect(
+        "MONGODB_URI", "slim-prediction", "AnnoyIndexerErrors")
+    collection.insert_one({"id": id, "error": "", "timestamp": datetime.now()})
     return json.dumps({'id': id})
+
 
 @application.route("/get-annoy-indexer/<id>", methods=['GET'])
 def getAnnoyIndexer(id):
     if id not in dictUsers:
-        return json.dumps({'id': id, 'result' : 'id unknown'})
+        return json.dumps({'id': id, 'result': 'id unknown'})
     if dictUsers[id].running():
-        return json.dumps({'id': id, 'result' : 'running'})
+        return json.dumps({'id': id, 'result': 'running'})
     elif dictUsers[id].cancelled():
         return json.dumps({'id': id, 'result': 'cancelled'})
     elif dictUsers[id].done():
@@ -198,17 +223,25 @@ def getAnnoyIndexer(id):
     else:
         return json.dumps({'id': id, 'result': 'not started yet'})
 
+
 @application.route("/", methods=['GET'])
 def index():
     return 'Running'
 
+
 @application.route("/remove-annoy-indexer/<id>", methods=['GET'])
 def removeAnnoyIndexer(id):
-    if id in dictUsers and dictUsers[id].done():
-        shutil.rmtree(os.path.join(current_app.root_path, 'DownloadFiles', id))
-        del(dictUsers[id])
-        return json.dumps({'id': id, 'result': 'removed'})
-    return json.dumps({'id': id, 'result': 'id unknown'})
+    try:
+        if id in dictUsers and dictUsers[id].done():
+            shutil.rmtree(os.path.join(
+                current_app.root_path, 'DownloadFiles', id))
+            del (dictUsers[id])
+            return json.dumps({'id': id, 'result': 'removed'})
+    except Exception as error:
+        mongoReplace(id, "Failed to remove annoy indexer.")
+        print(error)
+        return json.dumps({'id': id, 'result': 'id unknown'})
+
 
 @application.route("/find-matching-part", methods=['POST'])
 def findMatchingPart():
@@ -218,33 +251,47 @@ def findMatchingPart():
     # FInds an object using an array. The "in" keyword is used to search for the array values. It doesn't return duplicates.
     dictToReturn = {}
     amount = 0
-    for obj in content["data"]:
-        res = mycol.find_one({"image_file_names": obj}, {"_id": 0})
-        id = res['universal_uuid'] + res['file_name']
-        if id not in dictToReturn:
-            res['histo'] = 1
-            dictToReturn[id] = res
-        else:
-            dictToReturn[id]['histo'] += 1
-        amount += 1
-
-    for obj in dictToReturn:
-        dictToReturn[obj]['histo'] = float(dictToReturn[obj]['histo']) / AMOUNT_PARTS
+    try:
+        for obj in content["data"]:
+            res = mycol.find_one({"image_file_names": obj}, {"_id": 0})
+            id = res['universal_uuid'] + res['file_name']
+            if id not in dictToReturn:
+                res['histo'] = 1
+                dictToReturn[id] = res
+            else:
+                dictToReturn[id]['histo'] += 1
+            amount += 1
+    except Exception as error:
+        mongoReplace(id, "Failed to find matching part.")
+        print(error)
+    try:
+        for obj in dictToReturn:
+            dictToReturn[obj]['histo'] = float(
+                dictToReturn[obj]['histo']) / AMOUNT_PARTS
+    except Exception as error:
+        mongoReplace(id, "Failed to find matching part.")
+        print(error)
 
     return json.dumps(dictToReturn)
+
 
 @application.route("/get-psf-file", methods=['POST'])
 def getPsfFile():
     content = request.json
     requestPsfFile = content["data"]
     requestPsfFileKey = "psf/" + requestPsfFile
-
-    s3 = boto3.resource('s3')
-    bucketName = os.getenv("S3_BUCKET")
+    try:
+        s3 = boto3.resource('s3')
+        bucketName = os.getenv("S3_BUCKET")
+    except Exception as error:
+        print(error)
     awsPsfFile = s3.Object(bucketName, requestPsfFileKey)
-    awsPsfBytes = awsPsfFile.get()['Body'].read()
-
+    try:
+        awsPsfBytes = awsPsfFile.get()['Body'].read()
+    except Exception as error:
+        print(error)
     return awsPsfBytes
+
 
 @application.route("/get-img-file", methods=['POST'])
 def getImageFile():
@@ -252,16 +299,24 @@ def getImageFile():
     requestImageFile = content["data"]
     requestImageFileKey = "img/" + requestImageFile
 
-    s3 = boto3.resource('s3')
-    bucketName = os.getenv("S3_BUCKET")
+    try:
+        s3 = boto3.resource('s3')
+        bucketName = os.getenv("S3_BUCKET")
+    except Exception as error:
+        print(error)
     awsPsfFile = s3.Object(bucketName, requestImageFileKey)
-    awsPsfBytes = awsPsfFile.get()['Body'].read()
+    try:
+        awsPsfBytes = awsPsfFile.get()['Body'].read()
+    except Exception as error:
+        print(error)
 
     return awsPsfBytes
+
 
 @application.route("/is-alive", methods=['GET'])
 def isAlive():
     return json.dumps({'alive': 1})
+
 
 if __name__ == '__main__':
     application.run(debug=True, threaded=True)

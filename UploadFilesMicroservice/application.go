@@ -129,7 +129,7 @@ func main() {
 		fmt.Println(fileNameOnly)
 
 		// Check if the file is a zip file
-		if filepath.Ext(fileName) != ".zip" {
+		if filepath.Ext(fileName) != ".smd" {
 			c.SendString("Error, ask the admin to check the id:" + id.String())
 			return c.SendStatus(errorFunc.ErrorFormated(newRequest, mongoInfo, "E000003", "Invalid Extension"))
 		}
@@ -156,12 +156,7 @@ func main() {
 			}
 
 			// Key 32 bytes length
-			key, err := os.ReadFile("./RandomNumbers")
-			if err != nil {
-				c.SendString("Error, ask the admin to check the id:" + id.String())
-
-				return c.SendStatus(errorFunc.ErrorFormated(newRequest, mongoInfo, "E000004", err.Error()))
-			}
+			key := []byte(os.Getenv("ENC_KEY"))
 
 			//key, _ := os.ReadFile("RandomNumbers")
 			block, err := aes.NewCipher(key)
@@ -198,14 +193,14 @@ func main() {
 
 				return c.SendStatus(errorFunc.ErrorFormated(newRequest, mongoInfo, "E000008", err.Error()))
 			}
-
-			err = os.WriteFile(fileNameOnly+".zip", decryptedFile, 0777)
+			fileName = fileNameOnly + ".zip"
+			err = os.WriteFile(fileName, decryptedFile, 0777)
 			if err != nil {
 				c.SendString("Error, ask the admin to check the id:" + id.String())
 
 				return c.SendStatus(errorFunc.ErrorFormated(newRequest, mongoInfo, "E000009", err.Error()))
 			}
-			file, err := os.Open(fileNameOnly + ".zip")
+			file, err := os.Open(fileName)
 			if err != nil {
 				c.SendString("Error, ask the admin to check the id:" + id.String())
 
@@ -214,7 +209,7 @@ func main() {
 
 			// Unzip to temp folder
 			dst := "output/" + id.String()
-			archive, err := zip.OpenReader(fileNameOnly + ".zip")
+			archive, err := zip.OpenReader(fileName)
 			if err != nil {
 				c.SendString("Error, ask the admin to check the id:" + id.String())
 
