@@ -212,7 +212,6 @@ func main() {
 			archive, err := zip.OpenReader(fileName)
 			if err != nil {
 				c.SendString("Error, ask the admin to check the id:" + id.String())
-
 				return c.SendStatus(errorFunc.ErrorFormated(newRequest, mongoInfo, "E000011", err.Error()))
 			}
 
@@ -220,15 +219,16 @@ func main() {
 			psfFolderExists := false
 
 			for _, f := range archive.File {
-				if f.FileInfo().Name() == "img" {
+				fname := f.FileInfo().Name()
+				if filepath.Ext(fname) == ".png" {
 					imgFolderExists = true
 				}
-				if f.FileInfo().Name() == "psf" {
+				if filepath.Ext(fname) == ".psf" {
 					psfFolderExists = true
 				}
 
 			}
-
+			fmt.Println(imgFolderExists, psfFolderExists)
 			if !imgFolderExists || !psfFolderExists {
 				archive.Close()
 				file.Close()
@@ -239,31 +239,26 @@ func main() {
 					return c.SendStatus(errorFunc.ErrorFormated(newRequest, mongoInfo, "E000012", err.Error()))
 				}
 				c.SendString("Error, ask the admin to check the id:" + id.String())
-
-				return c.SendStatus(errorFunc.ErrorFormated(newRequest, mongoInfo, "E000013", err.Error()))
+				return c.SendStatus(errorFunc.ErrorFormated(newRequest, mongoInfo, "E000013", "Error while removing folder."))
 			}
 
 			for _, f := range archive.File {
 				filePath := filepath.Join(dst, f.Name)
-
 				if !strings.HasPrefix(filePath, filepath.Clean(dst)+string(os.PathSeparator)) {
 					fmt.Println("Invalid File Path")
 				}
 				if f.FileInfo().IsDir() {
-
 					os.MkdirAll(filePath, os.ModePerm)
 					continue
 				}
 				if err := os.MkdirAll(filepath.Dir(filePath), os.ModePerm); err != nil {
 					c.SendString("Error, ask the admin to check the id:" + id.String())
-
 					return c.SendStatus(errorFunc.ErrorFormated(newRequest, mongoInfo, "E000014", err.Error()))
 				}
 
 				dstFile, err := os.OpenFile(filePath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, f.Mode())
 				if err != nil {
 					c.SendString("Error, ask the admin to check the id:" + id.String())
-
 					return c.SendStatus(errorFunc.ErrorFormated(newRequest, mongoInfo, "E000015", err.Error()))
 				}
 
@@ -286,7 +281,7 @@ func main() {
 			archive.Close()
 			file.Close()
 
-			workingDir := strings.Join([]string{"./output", id.String(), fileNameOnly}, "/")
+			workingDir := strings.Join([]string{"./output", id.String()}, "/")
 			removeDir := strings.Join([]string{"./output", id.String()}, "/")
 
 			// Rename img folder file names
@@ -433,7 +428,7 @@ func main() {
 			fileList := []string{}
 
 			filepath.Walk(path, func(path string, info os.FileInfo, err error) error {
-				if !info.IsDir() && filepath.Ext(info.Name()) != ".json" {
+				if !info.IsDir() && filepath.Ext(info.Name()) != ".json" && filepath.Ext(info.Name()) != ".csv" {
 					fileList = append(fileList, path)
 				}
 				return nil
