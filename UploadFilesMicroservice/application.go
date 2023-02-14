@@ -63,7 +63,7 @@ type JSONData struct {
 
 func main() {
 	// This needs to be changed when the server goes to production.
-	prod := false
+	prod := true
 
 	if !prod {
 		err := godotenv.Load()
