@@ -14,7 +14,7 @@ import (
 func ConnectToMongoAtlas(mongoInfo *typeDef.MongoParts, collName string) (*mongo.Collection, error) {
 	// The following code is MongoDB atlas specific
 	serverAPIOptions := options.ServerAPI(options.ServerAPIVersion1)
-	clientOptions := options.Client().ApplyURI(mongoInfo.MongoURI).SetServerAPIOptions(serverAPIOptions)
+	clientOptions := options.Client().ApplyURI(mongoInfo.MongoURI).SetServerAPIOptions(serverAPIOptions).SetMaxPoolSize(5)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()

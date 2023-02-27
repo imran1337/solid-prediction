@@ -129,7 +129,7 @@ func main() {
 		fmt.Println(fileNameOnly)
 
 		// Check if the file is a zip file
-		if filepath.Ext(fileName) != ".smd" {
+		if filepath.Ext(fileName) != ".smp" {
 			c.SendString("Error, ask the admin to check the id:" + id.String())
 			return c.SendStatus(errorFunc.ErrorFormated(newRequest, mongoInfo, "E000003", "Invalid Extension"))
 		}
