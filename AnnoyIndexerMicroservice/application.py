@@ -109,10 +109,10 @@ def generateAnnoyIndexerTask(currentPath, vendor, category, generatedUUID):
     mycol = mongoConnect("MONGODB_URI", DB_NAME, COLLECTION_NAME)
     temp = []
 
-    # Check MongoDB to see if the JSON files have a PSF File
-    mypsfquery = {"psf_file_name": {"$exists": True},
+    # Check MongoDB to see if the JSON files have a Preset File
+    mypresetquery = {"preset_file_name": {"$exists": True},
                   "vendor": vendor, 'category': category}
-    mydoc = mycol.find(mypsfquery, {"image_file_names": 1})
+    mydoc = mycol.find(mypresetquery, {"image_file_names": 1})
 
     for x in mydoc:
         temp += x["image_file_names"]
@@ -275,22 +275,22 @@ def findMatchingPart():
     return json.dumps(dictToReturn)
 
 
-@application.route("/get-psf-file", methods=['POST'])
-def getPsfFile():
+@application.route("/get-preset-file", methods=['POST'])
+def getPresetFile():
     content = request.json
-    requestPsfFile = content["data"]
-    requestPsfFileKey = "psf/" + requestPsfFile
+    requestPresetFile = content["data"]
+    requestPresetFileKey = "preset/" + requestPresetFile
     try:
         s3 = boto3.resource('s3')
         bucketName = os.getenv("S3_BUCKET")
     except Exception as error:
         print(error)
-    awsPsfFile = s3.Object(bucketName, requestPsfFileKey)
+    awsPresetFile = s3.Object(bucketName, requestPresetFileKey)
     try:
-        awsPsfBytes = awsPsfFile.get()['Body'].read()
+        awsPresetBytes = awsPresetFile.get()['Body'].read()
     except Exception as error:
         print(error)
-    return awsPsfBytes
+    return awsPresetBytes
 
 
 @application.route("/get-img-file", methods=['POST'])
@@ -304,13 +304,13 @@ def getImageFile():
         bucketName = os.getenv("S3_BUCKET")
     except Exception as error:
         print(error)
-    awsPsfFile = s3.Object(bucketName, requestImageFileKey)
+    awsPresetFile = s3.Object(bucketName, requestImageFileKey)
     try:
-        awsPsfBytes = awsPsfFile.get()['Body'].read()
+        awsPresetBytes = awsPresetFile.get()['Body'].read()
     except Exception as error:
         print(error)
 
-    return awsPsfBytes
+    return awsPresetBytes
 
 
 @application.route("/is-alive", methods=['GET'])
