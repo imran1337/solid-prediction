@@ -18,36 +18,48 @@ import base64
 import hashlib
 from datetime import datetime
 
+environment = 'prod'
+if environment == 'dev':
+    try:
+        import dotenv
+        dotenv.load_dotenv()
+    except:
+        pass
+
+def connectMongoQuestionsDB():
+    mongoURI = os.getenv("MONGODB_URI")
+    myclient = pymongo.MongoClient(mongoURI)
+    return myclient
+
 threadExecutor = ThreadPoolExecutor(2)
 dictUsers = {}
 application = Flask(__name__)
+mongoClient = connectMongoQuestionsDB()
 # Mongo Global vars
-DB_NAME = "test"
+DB_NAME = "slim-prediction"
 COLLECTION_NAME = "JSONInfo"
 AMOUNT_PARTS = 7.0
 
-environment = 'dev'
-
-
-if environment == 'dev':
-    import dotenv
-    dotenv.load_dotenv()
-
-
-def mongoConnect(osEnv, dbName, CollectionName):
-    mongoURI = os.getenv(osEnv)
-    myclient = pymongo.MongoClient(mongoURI)
-    mydb = myclient[dbName]
-    mycol = mydb[CollectionName]
-    return mycol
-
+def _checkDBSession(clientDB):
+    '''
+    Check if the current connection is valid
+    :return: session object, None otherwise
+    '''
+    try:
+        clientDB.server_info()  # force connection on a request as the
+        # connect=True parameter of MongoClient seems
+        # to be useless here
+    except pymongo.errors.ServerSelectionTimeoutError as err:
+        print('Error in Database session connection.')
+        return None
+    return clientDB
 
 def mongoReplace(id, errorMessage):
-    collection = mongoConnect(
-        "MONGODB_URI", "slim-prediction", "featureMapErrors")
-    collection.replace_one(
-        {"id": id}, {"id": id, "error": errorMessage, "timestamp": datetime.now()})
-
+    session = _checkDBSession(mongoClient)
+    if session:
+        collection = session[DB_NAME]["AnnoyIndexerErrors"]
+        collection.replace_one(
+            {"id": id}, {"id": id, "error": errorMessage, "timestamp": datetime.now()})
 
 def startIndexing(image_data, indexerPath, vendor, category):
     if not os.path.exists(indexerPath):
@@ -106,7 +118,11 @@ def generateAnnoyIndexerTask(currentPath, vendor, category, generatedUUID):
     bucketName = os.getenv("S3_BUCKET")
 
     # Init MongoDB
-    mycol = mongoConnect("MONGODB_URI", DB_NAME, COLLECTION_NAME)
+    session = _checkDBSession(mongoClient)
+    if not session:
+        return 'DB not reachable', 500
+
+    mycol = session[DB_NAME][COLLECTION_NAME]
     temp = []
 
     # Check MongoDB to see if the JSON files have a Preset File
@@ -204,9 +220,10 @@ def annoyIndexer(vendor, cat):
     id = str(uuid.uuid4())
     dictUsers[id] = threadExecutor.submit(
         generateAnnoyIndexerTask, current_app.root_path, vendor, cat, id)
-    collection = mongoConnect(
-        "MONGODB_URI", "slim-prediction", "AnnoyIndexerErrors")
-    collection.insert_one({"id": id, "error": "", "timestamp": datetime.now()})
+    # Init MongoDB
+    session = _checkDBSession(mongoClient)
+    if not session:
+        mongoReplace(id, 'Error getting the DB for Annoy IDX')
     return json.dumps({'id': id})
 
 
@@ -246,31 +263,32 @@ def removeAnnoyIndexer(id):
 @application.route("/find-matching-part", methods=['POST'])
 def findMatchingPart():
     content = request.json
-    mycol = mongoConnect("MONGODB_URI", DB_NAME, COLLECTION_NAME)
-
-    # FInds an object using an array. The "in" keyword is used to search for the array values. It doesn't return duplicates.
+    session = _checkDBSession(mongoClient)
     dictToReturn = {}
-    amount = 0
-    try:
-        for obj in content["data"]:
-            res = mycol.find_one({"image_file_names": obj}, {"_id": 0})
-            id = res['universal_uuid'] + res['file_name']
-            if id not in dictToReturn:
-                res['histo'] = 1
-                dictToReturn[id] = res
-            else:
-                dictToReturn[id]['histo'] += 1
-            amount += 1
-    except Exception as error:
-        mongoReplace(id, "Failed to find matching part.")
-        print(error)
-    try:
-        for obj in dictToReturn:
-            dictToReturn[obj]['histo'] = float(
-                dictToReturn[obj]['histo']) / AMOUNT_PARTS
-    except Exception as error:
-        mongoReplace(id, "Failed to find matching part.")
-        print(error)
+    if session:
+        mycol = session[DB_NAME][COLLECTION_NAME]
+        # FInds an object using an array. The "in" keyword is used to search for the array values. It doesn't return duplicates.
+        amount = 0
+        try:
+            for obj in content["data"]:
+                res = mycol.find_one({"image_file_names": obj}, {"_id": 0})
+                id = res['universal_uuid'] + res['file_name']
+                if id not in dictToReturn:
+                    res['histo'] = 1
+                    dictToReturn[id] = res
+                else:
+                    dictToReturn[id]['histo'] += 1
+                amount += 1
+        except Exception as error:
+            mongoReplace(id, "Failed to find matching part.")
+            print(error)
+        try:
+            for obj in dictToReturn:
+                dictToReturn[obj]['histo'] = float(
+                    dictToReturn[obj]['histo']) / AMOUNT_PARTS
+        except Exception as error:
+            mongoReplace(id, "Failed to find matching part.")
+            print(error)
 
     return json.dumps(dictToReturn)
 

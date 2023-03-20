@@ -10,30 +10,40 @@ from featureMap import Index
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 
+# load_dotenv()
+def connectMongoQuestionsDB():
+    mongoURI = os.getenv("MONGODB_URI")
+    myclient = pymongo.MongoClient(mongoURI)
+    return myclient
+
 threadExecutor = ThreadPoolExecutor(1)
 dictUsers = {}
 application = Flask(__name__)
+mongoClient = connectMongoQuestionsDB()
 
-# load_dotenv()
-
-
-def mongoConnect(osEnv, dbName, CollectionName):
-    mongoURI = os.getenv(osEnv)
-    myclient = pymongo.MongoClient(mongoURI)
-    mydb = myclient[dbName]
-    mycol = mydb[CollectionName]
-    return mycol
-
+def _checkDBSession(clientDB):
+    '''
+    Check if the current connection is valid
+    :return: session object, None otherwise
+    '''
+    try:
+        clientDB.server_info()  # force connection on a request as the
+        # connect=True parameter of MongoClient seems
+        # to be useless here
+    except pymongo.errors.ServerSelectionTimeoutError as err:
+        print('Error in Database session connection.')
+        return None
+    return clientDB
 
 def mongoReplace(id, errorMessage):
-    collection = mongoConnect(
-        "MONGODB_URI", "slim-prediction", "featureMapErrors")
-    collection.replace_one(
-        {"id": id}, {"id": id, "error": errorMessage, "timestamp": datetime.now()})
-
+    session = _checkDBSession(mongoClient)
+    if session:
+        collection = session[DB_NAME]["featureMapErrors"]
+        collection.replace_one(
+            {"id": id}, {"id": id, "error": errorMessage, "timestamp": datetime.now()})
 
 # Mongo Global vars
-DB_NAME = "test"
+DB_NAME = "slim-prediction"
 COLLECTION_NAME = "JSONInfo"
 
 
@@ -139,9 +149,9 @@ def startFeatureMapMicroservice():
     dictUsers[id] = threadExecutor.submit(
         generateFeatureMapCreationTask, bucketName, content)
 
-    collection = mongoConnect(
-        "MONGODB_URI", "slim-prediction", "featureMapErrors")
-    collection.insert_one({"id": id, "error": "", "timestamp": datetime.now()})
+    if not session:
+        mongoReplace(id, 'Error getting the Feature Map MS DB.')
+
     return json.dumps({'id': id})
 
 
