@@ -61,6 +61,33 @@ type JSONData struct {
 	User                string
 }
 
+type JSONDataMETA struct {
+	Category         string
+	File_name        string
+	Tri_ratio_median float32
+	Rating_0_10      int8
+	Conn_avg         float32
+	Rating_raw       float32
+	Min_offset       float32
+	Offset_ratio     float32
+	Surface_area     float32
+	Vertexcount      int
+	Bbox_diagonal    float32
+	Edge_len_avg     float32
+	Max_offset       float32
+	Border_ratio     float32
+	Vtx_devn_ratio   float32
+	Tri_ratio_avg    float32
+	Curvature_avg    float32
+	Polyisland_count int
+	Facecount        int
+	Pointcount       int
+	Material_count   int32
+	Material_names   []string
+	Image_file_names []string
+	Psf_file_name    string
+}
+
 func main() {
 	// This needs to be changed when the server goes to production.
 	prod := true
@@ -75,6 +102,9 @@ func main() {
 	app := fiber.New(fiber.Config{
 		BodyLimit: 200 * 1024 * 1024,
 	})
+	app.Use(cors.New(cors.Config{
+		AllowOrigins: "https://www.solidmeta.unevis.de/",
+		AllowHeaders: "Origin, Content-Type, Accept"}))
 	// To allow cross origin, only for local development
 	if !prod {
 		app.Use(cors.New(cors.Config{
@@ -87,6 +117,169 @@ func main() {
 	mongoDBURI := os.Getenv("MONGODB_URI")
 	mongoDB := os.Getenv("MONGO_DB")
 	app.Get("/", func(c *fiber.Ctx) error { return c.SendStatus(200) })
+	app.Post("/decrypt", func(c *fiber.Ctx) error {
+		c.Set("Access-Control-Allow-Origin", "https://www.solidmeta.unevis.de")
+		err := finishingFuncs.CleanUp("./decrypt")
+		println("Hello")
+		if err != nil {
+			println(err)
+		}
+		id := uuid.New()
+		mongoInfo := &typeDef.MongoParts{MongoURI: mongoDBURI, MongoDBName: mongoDB}
+		newRequest := &typeDef.RequestInfo{
+			Id:          id.String(),
+			Status:      "Not Completed",
+			ErrComplete: "none",
+			ErrCode:     "none",
+		}
+		// Connect to database
+		// Set client options, the string is the connection to the mongo uri
+		collection, err := mongocode.ConnectToMongoAtlas(mongoInfo, "requestStatus")
+		if err != nil {
+			c.SendString("Error, ask the admin to check the id:" + id.String())
+			return c.SendStatus(errorFunc.ErrorFormated(newRequest, mongoInfo, "E000025", err.Error()))
+		}
+		// Insert the first instance of the request. While it is being processed the user can consult it later.
+		_, err = collection.InsertOne(context.TODO(), newRequest)
+		if err != nil {
+			c.SendString("Error, ask the admin to check the id:" + id.String())
+			return c.SendStatus(errorFunc.ErrorFormated(newRequest, mongoInfo, "E000029", err.Error()))
+		}
+		fileFromPost, err := c.FormFile("File")
+		if err != nil {
+			c.SendString("Error, ask the admin to check the id:" + id.String())
+			return c.SendStatus(errorFunc.ErrorFormated(newRequest, mongoInfo, "E000001", err.Error()))
+		}
+		fileName := fileFromPost.Filename
+		println(fileName)
+		fileNameOnly := strings.TrimSuffix(fileName, filepath.Ext(fileName))
+		multiPartfile, err := fileFromPost.Open()
+		if err != nil {
+			c.SendString("Error, ask the admin to check the id:" + id.String())
+
+			return c.SendStatus(errorFunc.ErrorFormated(newRequest, mongoInfo, "E000002", err.Error()))
+		}
+
+		defer multiPartfile.Close()
+
+		encryptedFile, err := io.ReadAll(multiPartfile)
+		if err != nil {
+			c.SendString("Error, ask the admin to check the id:" + id.String())
+
+			return c.SendStatus(errorFunc.ErrorFormated(newRequest, mongoInfo, "E000004", err.Error()))
+		}
+
+		// Key 32 bytes length
+		key := []byte(os.Getenv("ENC_KEY"))
+
+		//key, _ := os.ReadFile("RandomNumbers")
+		block, err := aes.NewCipher(key)
+		if err != nil {
+			c.SendString("Error, ask the admin to check the id:" + id.String())
+
+			return c.SendStatus(errorFunc.ErrorFormated(newRequest, mongoInfo, "E000005", err.Error()))
+		}
+		// We are going to use the GCM mode, which is a stream mode with authentication.
+		// So we don’t have to worry about the padding or doing the authentication, since it is already done by the package.
+		gcm, err := cipher.NewGCM(block)
+		if err != nil {
+			c.SendString("Error, ask the admin to check the id:" + id.String())
+
+			return c.SendStatus(errorFunc.ErrorFormated(newRequest, mongoInfo, "E000006", err.Error()))
+		}
+		// This mode requires a nonce array. It works like an IV.
+		// Make sure this is never the same value, that is, change it every time you will encrypt, even if it is the same file.
+		// You can do this with a random value, using the package crypto/rand.
+		// Never use more than 2^32 random nonces with a given key because of the risk of repeat.
+		nonce := make([]byte, gcm.NonceSize())
+		if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
+			c.SendString("Error, ask the admin to check the id:" + id.String())
+
+			return c.SendStatus(errorFunc.ErrorFormated(newRequest, mongoInfo, "E000007", err.Error()))
+		}
+
+		// Removing the nonce
+		nonce2 := encryptedFile[:gcm.NonceSize()]
+		encryptedFile = encryptedFile[gcm.NonceSize():]
+		decryptedFile, err := gcm.Open(nil, nonce2, encryptedFile, nil)
+		if err != nil {
+			c.SendString("Error, ask the admin to check the id:" + id.String())
+
+			return c.SendStatus(errorFunc.ErrorFormated(newRequest, mongoInfo, "E000008", err.Error()))
+		}
+		fileName = fileNameOnly + ".zip"
+		err = os.WriteFile(fileName, decryptedFile, 0777)
+		if err != nil {
+			c.SendString("Error, ask the admin to check the id:" + id.String())
+			return c.SendStatus(errorFunc.ErrorFormated(newRequest, mongoInfo, "E000009", err.Error()))
+		}
+		file, err := os.Open(fileName)
+		if err != nil {
+			c.SendString("Error, ask the admin to check the id:" + id.String())
+			return c.SendStatus(errorFunc.ErrorFormated(newRequest, mongoInfo, "E000010", err.Error()))
+		}
+
+		// Unzip to temp folder
+		dst := "decrypt/" + id.String()
+		archive, err := zip.OpenReader(fileName)
+		if err != nil {
+			c.SendString("Error, ask the admin to check the id:" + id.String())
+			return c.SendStatus(errorFunc.ErrorFormated(newRequest, mongoInfo, "E000011", err.Error()))
+		}
+		var jsonFileName string
+		for _, f := range archive.File {
+			filePath := filepath.Join(dst, f.Name)
+			if !strings.HasPrefix(filePath, filepath.Clean(dst)+string(os.PathSeparator)) {
+				fmt.Println("Invalid File Path")
+			}
+			if filepath.Ext(f.Name) == ".json" {
+				jsonFileName = f.Name
+				if err := os.MkdirAll(filepath.Dir(filePath), os.ModePerm); err != nil {
+					c.SendString("Error, ask the admin to check the id:" + id.String())
+					return c.SendStatus(errorFunc.ErrorFormated(newRequest, mongoInfo, "E000014", err.Error()))
+				}
+
+				dstFile, err := os.OpenFile(filePath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, f.Mode())
+				if err != nil {
+					c.SendString("Error, ask the admin to check the id:" + id.String())
+					return c.SendStatus(errorFunc.ErrorFormated(newRequest, mongoInfo, "E000015", err.Error()))
+				}
+
+				fileInArchive, err := f.Open()
+				if err != nil {
+					c.SendString("Error, ask the admin to check the id:" + id.String())
+					return c.SendStatus(errorFunc.ErrorFormated(newRequest, mongoInfo, "E000016", err.Error()))
+				}
+
+				if _, err := io.Copy(dstFile, fileInArchive); err != nil {
+					c.SendString("Error, ask the admin to check the id:" + id.String())
+
+					return c.SendStatus(errorFunc.ErrorFormated(newRequest, mongoInfo, "E000017", err.Error()))
+				}
+				dstFile.Close()
+				fileInArchive.Close()
+				break
+			}
+
+		}
+		archive.Close()
+		file.Close()
+		err = os.RemoveAll("./" + fileNameOnly + ".zip")
+		if err != nil {
+			print(err.Error())
+		}
+		fileInfo, err := os.ReadFile(dst + "/" + jsonFileName)
+		if err != nil {
+			println(err.Error())
+		}
+		var result []JSONDataMETA
+		err = json.Unmarshal(fileInfo, &result)
+		if err != nil {
+			c.SendString("Error, ask the admin to check the id:" + id.String())
+			return c.SendStatus(errorFunc.ErrorFormated(newRequest, mongoInfo, "E000024", err.Error()))
+		}
+		return c.JSON(result)
+	})
 	app.Post("/send/:flag", func(c *fiber.Ctx) error {
 		choiceFlag := c.Params("flag")
 
@@ -265,7 +458,6 @@ func main() {
 				fileInArchive, err := f.Open()
 				if err != nil {
 					c.SendString("Error, ask the admin to check the id:" + id.String())
-
 					return c.SendStatus(errorFunc.ErrorFormated(newRequest, mongoInfo, "E000016", err.Error()))
 				}
 
@@ -355,7 +547,6 @@ func main() {
 			err = json.Unmarshal(byteValue, &result)
 			if err != nil {
 				c.SendString("Error, ask the admin to check the id:" + id.String())
-
 				return c.SendStatus(errorFunc.ErrorFormated(newRequest, mongoInfo, "E000024", err.Error()))
 			}
 
