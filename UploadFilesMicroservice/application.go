@@ -53,7 +53,7 @@ type JSONData struct {
 	Material_count      int32
 	Material_names      []string
 	Image_file_names    []string
-	Psf_file_name       string
+	Preset_file_name       string
 	Universal_uuid      string
 	Parent_Package_Name string
 	Version             int
@@ -409,20 +409,20 @@ func main() {
 			}
 
 			imgFolderExists := false
-			psfFolderExists := false
+			presetFolderExists := false
 
 			for _, f := range archive.File {
 				fname := f.FileInfo().Name()
 				if filepath.Ext(fname) == ".png" {
 					imgFolderExists = true
 				}
-				if filepath.Ext(fname) == ".psf" {
-					psfFolderExists = true
+				if filepath.Ext(fname) == ".preset" {
+					presetFolderExists = true
 				}
 
 			}
-			fmt.Println(imgFolderExists, psfFolderExists)
-			if !imgFolderExists || !psfFolderExists {
+			fmt.Println(imgFolderExists, presetFolderExists)
+			if !imgFolderExists || !presetFolderExists {
 				archive.Close()
 				file.Close()
 				err = os.Remove("./" + fileName)
@@ -494,18 +494,18 @@ func main() {
 				}
 			}
 
-			// Rename psf folder file names
-			psfBaseDir := workingDir + "/psf/"
-			psfDir, err := os.ReadDir(psfBaseDir)
+			// Rename preset folder file names
+			presetBaseDir := workingDir + "/preset/"
+			presetDir, err := os.ReadDir(presetBaseDir)
 			if err != nil {
 				c.SendString("Error, ask the admin to check the id:" + id.String())
 
 				return c.SendStatus(errorFunc.ErrorFormated(newRequest, mongoInfo, "E000020", err.Error()))
 			}
-			for i := range psfDir {
-				singlePsfCurrentDir := psfBaseDir + psfDir[i].Name()
-				singlePsfNewDir := psfBaseDir + id.String() + psfDir[i].Name()
-				err = os.Rename(singlePsfCurrentDir, singlePsfNewDir)
+			for i := range presetDir {
+				singlePresetCurrentDir := presetBaseDir + presetDir[i].Name()
+				singlePresetNewDir := presetBaseDir + id.String() + presetDir[i].Name()
+				err = os.Rename(singlePresetCurrentDir, singlePresetNewDir)
 				if err != nil {
 					c.SendString("Error, ask the admin to check the id:" + id.String())
 
@@ -559,7 +559,7 @@ func main() {
 				for iImages := range result[iStruct].Image_file_names {
 					result[iStruct].Image_file_names[iImages] = id.String() + result[iStruct].Image_file_names[iImages]
 				}
-				result[iStruct].Psf_file_name = id.String() + result[iStruct].Psf_file_name
+				result[iStruct].Preset_file_name = id.String() + result[iStruct].Preset_file_name
 				result[iStruct].User = "dmelim@unevis.de"
 			}
 
