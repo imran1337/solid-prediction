@@ -9,12 +9,26 @@ import (
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/session"
+	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/aws/aws-sdk-go/service/s3/s3manager"
 )
 
-func UploadDirToS3(bucket string, jobs <-chan typeDef.ImagePath, results chan<- typeDef.Result) {
+func SearchAndMatch(svc *s3.S3, bucket string, name string) (matchFound bool) {
+	resp, err := svc.ListObjectsV2(&s3.ListObjectsV2Input{Bucket: aws.String(bucket), Prefix: aws.String("preset/")})
+	if err != nil {
+		fmt.Println(err.Error())
+	}
+	for _, item := range resp.Contents {
+		if filepath.Base(name) == filepath.Base(*item.Key) {
+			return true
+		}
+	}
+	return false
+}
+
+func UploadDirToS3(bucket string, jobs <-chan typeDef.ImagePath, results chan<- typeDef.Result, sess *session.Session, svc *s3.S3) {
 	for imgPath := range jobs {
-		loc, err := putInS3(imgPath.FilePath, bucket)
+		loc, err := putInS3(imgPath.FilePath, bucket, sess, svc)
 		if err != nil {
 			fmt.Println(err.Error())
 		}
@@ -22,14 +36,12 @@ func UploadDirToS3(bucket string, jobs <-chan typeDef.ImagePath, results chan<- 
 	}
 }
 
-func putInS3(pathOfFile string, bucket string) (location string, err error) {
+func putInS3(pathOfFile string, bucket string, sess *session.Session, svc *s3.S3) (location string, err error) {
 	var folder string
 	if err != nil {
 		fmt.Printf("Error loading .env file")
 	}
-	sess, err := session.NewSession(&aws.Config{
-		Region: aws.String("eu-central-1")},
-	)
+
 	if err != nil {
 		fmt.Println(err.Error())
 	}
@@ -40,8 +52,12 @@ func putInS3(pathOfFile string, bucket string) (location string, err error) {
 	if filepath.Ext(file.Name()) == ".png" {
 		folder = "/img/"
 	}
-	if filepath.Ext(file.Name()) == ".psf" {
-		folder = "/psf/"
+	if filepath.Ext(file.Name()) == ".preset" {
+		folder = "/preset/"
+		if SearchAndMatch(svc, bucket, filepath.Base(file.Name())) {
+			fmt.Println("This is a duplicate: " + filepath.Base(file.Name()))
+			return filepath.Base(file.Name()), nil
+		}
 	}
 	path := folder + filepath.Base(file.Name())
 	defer file.Close()
