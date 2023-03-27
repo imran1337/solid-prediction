@@ -95,7 +95,7 @@ type JSONDataMETA struct {
 
 func main() {
 	// This needs to be changed when the server goes to production.
-	prod := true
+	prod := false
 
 	if !prod {
 		err := godotenv.Load()
@@ -103,12 +103,12 @@ func main() {
 			fmt.Printf("Error loading .env file")
 		}
 	}
-
+	FRONT_END_URI := os.Getenv("FRONTEND_URL")
 	app := fiber.New(fiber.Config{
 		BodyLimit: 200 * 1024 * 1024,
 	})
 	app.Use(cors.New(cors.Config{
-		AllowOrigins: "https://www.solidmeta.unevis.de/",
+		AllowOrigins: FRONT_END_URI,
 		AllowHeaders: "Origin, Content-Type, Accept"}))
 	// To allow cross origin, only for local development
 	if !prod {
@@ -158,15 +158,12 @@ func main() {
 	})
 	app.Post("/decrypt", func(c *fiber.Ctx) error {
 		c.Set("Access-Control-Allow-Origin", "https://www.solidmeta.unevis.de")
-		err := finishingFuncs.CleanUp("./decrypt")
-		if err != nil {
-			fmt.Println(err)
-		}
+
 		id := uuid.New()
 
 		newRequest := &typeDef.RequestInfo{
 			Id:          id.String(),
-			Status:      "Not Completed",
+			Status:      "Running",
 			ErrComplete: "none",
 			ErrCode:     "none",
 		}
@@ -316,6 +313,7 @@ func main() {
 			c.SendString("Error, ask the admin to check the id:" + id.String())
 			return c.SendStatus(errorFunc.ErrorFormated(newRequest, mongoInfo, "E000024", err.Error(), client))
 		}
+		defer finishingFuncs.CleanUp("./decrypt/" + id.String())
 		return c.JSON(result)
 	})
 	app.Post("/send/:flag", func(c *fiber.Ctx) error {
@@ -330,7 +328,7 @@ func main() {
 
 		newRequest := &typeDef.RequestInfo{
 			Id:          id.String(),
-			Status:      "Not Completed",
+			Status:      "Running",
 			ErrComplete: "none",
 			ErrCode:     "none",
 		}
@@ -601,7 +599,7 @@ func main() {
 				for iImages := range result[iStruct].Image_file_names {
 					result[iStruct].Image_file_names[iImages] = id.String() + result[iStruct].Image_file_names[iImages]
 				}
-				result[iStruct].Preset_file_name = mapHashesNames[result[iStruct].Preset_file_name]
+				result[iStruct].Preset_file_name = mapHashesNames[result[iStruct].Preset_file_name] + ".preset"
 				result[iStruct].User = "dmelim@unevis.de"
 			}
 			collectionJSONInfo, err := mongocode.GetMongoCollection(mongoInfo, "JSONInfo", client)
@@ -676,17 +674,13 @@ func main() {
 				close(jobs)
 			}()
 			go func() int {
+				defer finishingFuncs.CleanUp(removeDir)
 				for chItems := range resultsCh {
 					uploadedList = append(uploadedList, chItems)
 					if totalImageLen == len(uploadedList) {
 						elapsed := time.Since(start)
 						fmt.Printf("\nRequest took %f", elapsed.Seconds())
-						err := finishingFuncs.CleanUp(removeDir)
-						if err != nil {
 
-							return errorFunc.ErrorFormated(newRequest, mongoInfo, "E000028", err.Error(), client)
-
-						}
 						filter := bson.D{{Key: "id", Value: newRequest.Id}}
 						if err != nil {
 							return errorFunc.ErrorFormated(newRequest, mongoInfo, "E000026", err.Error(), client)
@@ -752,10 +746,10 @@ func main() {
 		return c.SendString(fmt.Sprintf("The id: %s, is %s.", results[0].Id, results[0].Status))
 	})
 
-	defaultPort := "5000"
+	defaultPort := ":5000"
 
 	if !prod {
-		defaultPort = "4000"
+		defaultPort = "localhost:4000"
 	}
 
 	port := os.Getenv("PORT")
@@ -763,5 +757,5 @@ func main() {
 		port = defaultPort
 	}
 
-	log.Fatal(app.Listen(":" + port))
+	log.Fatal(app.Listen(port))
 }
