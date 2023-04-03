@@ -3,6 +3,7 @@ package finishingFuncs
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"os"
 )
@@ -10,6 +11,7 @@ import (
 type Message struct {
 	UUID     string
 	FileName string
+	Vendor   string
 }
 
 func CleanUp(dir string) (errLog error) {
@@ -20,13 +22,14 @@ func CleanUp(dir string) (errLog error) {
 	return nil
 }
 
-func ServerCommunication(id string, filename string, receiver string) (message string, errLog error) {
+func ServerCommunication(id string, filename string, receiver string, vendor string) (message string, errLog error) {
 	// Create a new instance of Message
 	responseMessage := Message{
 		UUID:     id,
 		FileName: filename,
+		Vendor:   vendor,
 	}
-
+	fmt.Println(responseMessage)
 	// Marshal it into JSON prior to requesting
 	messageJSON, err := json.Marshal(responseMessage)
 	if err != nil {

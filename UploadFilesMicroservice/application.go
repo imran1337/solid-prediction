@@ -95,7 +95,7 @@ type JSONDataMETA struct {
 
 func main() {
 	// This needs to be changed when the server goes to production.
-	prod := false
+	prod := true
 
 	if !prod {
 		err := godotenv.Load()
@@ -152,170 +152,6 @@ func main() {
 	}
 
 	app.Get("/", func(c *fiber.Ctx) error { return c.SendStatus(200) })
-	app.Get("/test", func(c *fiber.Ctx) error {
-		awsupload.SearchAndMatch(svc, bucket, "test")
-		return c.SendStatus(200)
-	})
-	app.Post("/decrypt", func(c *fiber.Ctx) error {
-		c.Set("Access-Control-Allow-Origin", "https://www.solidmeta.unevis.de")
-
-		id := uuid.New()
-
-		newRequest := &typeDef.RequestInfo{
-			Id:          id.String(),
-			Status:      "Running",
-			ErrComplete: "none",
-			ErrCode:     "none",
-		}
-		// Connect to database
-		// Set client options, the string is the connection to the mongo uri
-		collection, err := mongocode.GetMongoCollection(mongoInfo, "requestStatus", client)
-		if err != nil {
-			c.SendString("Error, ask the admin to check the id:" + id.String())
-			return c.SendStatus(errorFunc.ErrorFormated(newRequest, mongoInfo, "E000025", err.Error(), client))
-		}
-		// Insert the first instance of the request. While it is being processed the user can consult it later.
-		_, err = collection.InsertOne(context.TODO(), newRequest)
-		if err != nil {
-			c.SendString("Error, ask the admin to check the id:" + id.String())
-			return c.SendStatus(errorFunc.ErrorFormated(newRequest, mongoInfo, "E000029", err.Error(), client))
-		}
-		fileFromPost, err := c.FormFile("File")
-		if err != nil {
-			c.SendString("Error, ask the admin to check the id:" + id.String())
-			return c.SendStatus(errorFunc.ErrorFormated(newRequest, mongoInfo, "E000001", err.Error(), client))
-		}
-		fileName := fileFromPost.Filename
-		fmt.Println(fileName)
-		fileNameOnly := strings.TrimSuffix(fileName, filepath.Ext(fileName))
-		multiPartfile, err := fileFromPost.Open()
-		if err != nil {
-			c.SendString("Error, ask the admin to check the id:" + id.String())
-
-			return c.SendStatus(errorFunc.ErrorFormated(newRequest, mongoInfo, "E000002", err.Error(), client))
-		}
-
-		defer multiPartfile.Close()
-
-		encryptedFile, err := io.ReadAll(multiPartfile)
-		if err != nil {
-			c.SendString("Error, ask the admin to check the id:" + id.String())
-
-			return c.SendStatus(errorFunc.ErrorFormated(newRequest, mongoInfo, "E000004", err.Error(), client))
-		}
-
-		// Key 32 bytes length
-		key := []byte(os.Getenv("ENC_KEY"))
-
-		//key, _ := os.ReadFile("RandomNumbers")
-		block, err := aes.NewCipher(key)
-		if err != nil {
-			c.SendString("Error, ask the admin to check the id:" + id.String())
-
-			return c.SendStatus(errorFunc.ErrorFormated(newRequest, mongoInfo, "E000005", err.Error(), client))
-		}
-		// We are going to use the GCM mode, which is a stream mode with authentication.
-		// So we don’t have to worry about the padding or doing the authentication, since it is already done by the package.
-		gcm, err := cipher.NewGCM(block)
-		if err != nil {
-			c.SendString("Error, ask the admin to check the id:" + id.String())
-
-			return c.SendStatus(errorFunc.ErrorFormated(newRequest, mongoInfo, "E000006", err.Error(), client))
-		}
-		// This mode requires a nonce array. It works like an IV.
-		// Make sure this is never the same value, that is, change it every time you will encrypt, even if it is the same file.
-		// You can do this with a random value, using the package crypto/rand.
-		// Never use more than 2^32 random nonces with a given key because of the risk of repeat.
-		nonce := make([]byte, gcm.NonceSize())
-		if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
-			c.SendString("Error, ask the admin to check the id:" + id.String())
-
-			return c.SendStatus(errorFunc.ErrorFormated(newRequest, mongoInfo, "E000007", err.Error(), client))
-		}
-
-		// Removing the nonce
-		nonce2 := encryptedFile[:gcm.NonceSize()]
-		encryptedFile = encryptedFile[gcm.NonceSize():]
-		decryptedFile, err := gcm.Open(nil, nonce2, encryptedFile, nil)
-		if err != nil {
-			c.SendString("Error, ask the admin to check the id:" + id.String())
-
-			return c.SendStatus(errorFunc.ErrorFormated(newRequest, mongoInfo, "E000008", err.Error(), client))
-		}
-		fileName = fileNameOnly + ".zip"
-		err = os.WriteFile(fileName, decryptedFile, 0777)
-		if err != nil {
-			c.SendString("Error, ask the admin to check the id:" + id.String())
-			return c.SendStatus(errorFunc.ErrorFormated(newRequest, mongoInfo, "E000009", err.Error(), client))
-		}
-		file, err := os.Open(fileName)
-		if err != nil {
-			c.SendString("Error, ask the admin to check the id:" + id.String())
-			return c.SendStatus(errorFunc.ErrorFormated(newRequest, mongoInfo, "E000010", err.Error(), client))
-		}
-
-		// Unzip to temp folder
-		dst := "decrypt/" + id.String()
-		archive, err := zip.OpenReader(fileName)
-		if err != nil {
-			c.SendString("Error, ask the admin to check the id:" + id.String())
-			return c.SendStatus(errorFunc.ErrorFormated(newRequest, mongoInfo, "E000011", err.Error(), client))
-		}
-		var jsonFileName string
-		for _, f := range archive.File {
-			filePath := filepath.Join(dst, f.Name)
-			if !strings.HasPrefix(filePath, filepath.Clean(dst)+string(os.PathSeparator)) {
-				fmt.Println("Invalid File Path")
-			}
-			if filepath.Ext(f.Name) == ".json" {
-				jsonFileName = f.Name
-				if err := os.MkdirAll(filepath.Dir(filePath), os.ModePerm); err != nil {
-					c.SendString("Error, ask the admin to check the id:" + id.String())
-					return c.SendStatus(errorFunc.ErrorFormated(newRequest, mongoInfo, "E000014", err.Error(), client))
-				}
-
-				dstFile, err := os.OpenFile(filePath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, f.Mode())
-				if err != nil {
-					c.SendString("Error, ask the admin to check the id:" + id.String())
-					return c.SendStatus(errorFunc.ErrorFormated(newRequest, mongoInfo, "E000015", err.Error(), client))
-				}
-
-				fileInArchive, err := f.Open()
-				if err != nil {
-					c.SendString("Error, ask the admin to check the id:" + id.String())
-					return c.SendStatus(errorFunc.ErrorFormated(newRequest, mongoInfo, "E000016", err.Error(), client))
-				}
-
-				if _, err := io.Copy(dstFile, fileInArchive); err != nil {
-					c.SendString("Error, ask the admin to check the id:" + id.String())
-
-					return c.SendStatus(errorFunc.ErrorFormated(newRequest, mongoInfo, "E000017", err.Error(), client))
-				}
-				dstFile.Close()
-				fileInArchive.Close()
-				break
-			}
-
-		}
-		archive.Close()
-		file.Close()
-		err = os.RemoveAll("./" + fileNameOnly + ".zip")
-		if err != nil {
-			print(err.Error())
-		}
-		fileInfo, err := os.ReadFile(dst + "/" + jsonFileName)
-		if err != nil {
-			fmt.Println(err.Error())
-		}
-		var result []JSONDataMETA
-		err = json.Unmarshal(fileInfo, &result)
-		if err != nil {
-			c.SendString("Error, ask the admin to check the id:" + id.String())
-			return c.SendStatus(errorFunc.ErrorFormated(newRequest, mongoInfo, "E000024", err.Error(), client))
-		}
-		defer finishingFuncs.CleanUp("./decrypt/" + id.String())
-		return c.JSON(result)
-	})
 	app.Post("/send/:flag", func(c *fiber.Ctx) error {
 		choiceFlag := c.Params("flag")
 
@@ -352,7 +188,12 @@ func main() {
 			c.SendString("Error, ask the admin to check the id:" + id.String())
 			return c.SendStatus(errorFunc.ErrorFormated(newRequest, mongoInfo, "E000001", err.Error(), client))
 		}
+		vendor := c.FormValue("Vendor")
 
+		if vendor == "" {
+			c.SendString("No vendor specified.")
+			return c.SendStatus(500)
+		}
 		fileName := fileFromPost.Filename
 		fileNameOnly := strings.TrimSuffix(fileName, filepath.Ext(fileName))
 		fmt.Println(fileNameOnly)
@@ -592,15 +433,20 @@ func main() {
 
 			// Updates certain properties of the JSON file
 			for iStruct := range result {
+				if result[iStruct].Category == "" {
+					defer finishingFuncs.CleanUp(removeDir)
+					c.SendString("No category specified.")
+					return c.SendStatus(500)
+				}
 				result[iStruct].Universal_uuid = id.String()
 				result[iStruct].Parent_Package_Name = fileNameOnly
 				result[iStruct].Version = 1
-				result[iStruct].Vendor = "Volkswagen"
+				result[iStruct].Vendor = vendor
 				for iImages := range result[iStruct].Image_file_names {
 					result[iStruct].Image_file_names[iImages] = id.String() + result[iStruct].Image_file_names[iImages]
 				}
 				result[iStruct].Preset_file_name = mapHashesNames[result[iStruct].Preset_file_name] + ".preset"
-				result[iStruct].User = "dmelim@unevis.de"
+				result[iStruct].User = ""
 			}
 			collectionJSONInfo, err := mongocode.GetMongoCollection(mongoInfo, "JSONInfo", client)
 
@@ -658,7 +504,7 @@ func main() {
 			fileList := []string{}
 
 			filepath.Walk(path, func(path string, info os.FileInfo, err error) error {
-				if !info.IsDir() && filepath.Ext(info.Name()) != ".json" && filepath.Ext(info.Name()) != ".csv" {
+				if !info.IsDir() && filepath.Ext(info.Name()) != ".json" && filepath.Ext(info.Name()) != ".csv" && filepath.Ext(info.Name()) != ".txt" {
 					fileList = append(fileList, path)
 				}
 				return nil
@@ -690,7 +536,7 @@ func main() {
 						if err != nil {
 							return errorFunc.ErrorFormated(newRequest, mongoInfo, "E000029", err.Error(), client)
 						}
-						errMsg, err := finishingFuncs.ServerCommunication(id.String(), fileNameOnly, pythonServerURL)
+						errMsg, err := finishingFuncs.ServerCommunication(id.String(), fileNameOnly, pythonServerURL, vendor)
 						if err != nil {
 							fmt.Println("Failed to communicate with the python server")
 							return errorFunc.ErrorFormated(newRequest, mongoInfo, errMsg, err.Error(), client)
@@ -744,6 +590,22 @@ func main() {
 		}
 
 		return c.SendString(fmt.Sprintf("The id: %s, is %s.", results[0].Id, results[0].Status))
+	})
+
+	app.Delete("delete/:id", func(c *fiber.Ctx) error {
+		requestId := c.Params("id")
+		fmt.Println(requestId)
+		// search for it in mongoDB, and get all entries.
+
+		// Check if the preset files are being used in any other id. For example get all the unique preset files hashes, and then
+		// search for this preset files hashes, check if this hashes have more that one id associated to them, get all unique id's and this should help.
+
+		//Then delete all preset files IF they are not needed by other files. If they are ignore them.
+		//Delete all image files related to the ID.
+
+		// When this is over delete all mongodb entries relating to the ID
+
+		return c.SendStatus(200)
 	})
 
 	defaultPort := ":5000"

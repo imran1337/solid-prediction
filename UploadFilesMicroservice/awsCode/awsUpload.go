@@ -55,7 +55,11 @@ func putInS3(pathOfFile string, bucket string, sess *session.Session, svc *s3.S3
 	if filepath.Ext(file.Name()) == ".preset" {
 		folder = "/preset/"
 		if SearchAndMatch(svc, bucket, filepath.Base(file.Name())) {
-			fmt.Println("This is a duplicate: " + filepath.Base(file.Name()))
+			file.Close()
+			err := os.Remove(file.Name())
+			if err != nil {
+				fmt.Println(err.Error())
+			}
 			return filepath.Base(file.Name()), nil
 		}
 	}
