@@ -23,8 +23,10 @@ import (
 	typeDef "uploadfilesmicroservice/typeDef"
 
 	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go/aws/awserr"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/s3"
+	"github.com/aws/aws-sdk-go/service/s3/s3manager"
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/cors"
 	"github.com/google/uuid"
@@ -93,6 +95,15 @@ type JSONDataMETA struct {
 	Psf_file_name    string
 }
 
+func stringInSlice(a string, list []string) bool {
+	for _, b := range list {
+		if b == a {
+			return true
+		}
+	}
+	return false
+}
+
 func main() {
 	// This needs to be changed when the server goes to production.
 	prod := true
@@ -113,7 +124,7 @@ func main() {
 	// To allow cross origin, only for local development
 	if !prod {
 		app.Use(cors.New(cors.Config{
-			AllowOrigins: "http://localhost:3000",
+			AllowOrigins: "http://localhost:5173",
 			AllowHeaders: "Origin, Content-Type, Accept"}))
 	}
 
@@ -142,7 +153,7 @@ func main() {
 	mongoInfo := &typeDef.MongoParts{MongoURI: mongoDBURI, MongoDBName: mongoDB}
 	clientOptions := options.Client().ApplyURI(mongoInfo.MongoURI).SetServerAPIOptions(serverAPIOptions).SetMaxPoolSize(5)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Minute)
 	defer cancel()
 
 	// Connect to MongoDB
@@ -150,8 +161,26 @@ func main() {
 	if err != nil {
 		fmt.Println(err.Error()) //c.SendStatus(500)
 	}
-
+	collectionJSONInfo, err := mongocode.GetMongoCollection(mongoInfo, "JSONInfo", client)
+	if err != nil {
+		log.Println("Failed to get the collection JSONInfo")
+	}
+	collectionRequestStatus, err := mongocode.GetMongoCollection(mongoInfo, "requestStatus", client)
+	if err != nil {
+		log.Println("Failed to get the collection JSONInfo")
+	}
 	app.Get("/", func(c *fiber.Ctx) error { return c.SendStatus(200) })
+	app.Post("/validate-password", func(c *fiber.Ctx) error {
+		clientPassword := c.FormValue("pw")
+		serverPassword := os.Getenv("PASSWORD")
+		fmt.Println(clientPassword, serverPassword)
+		if clientPassword == serverPassword {
+			c.SendString("Password is valid")
+			return c.SendStatus(200)
+		}
+		c.SendString("Invalid")
+		return c.SendStatus(500)
+	})
 	app.Post("/send/:flag", func(c *fiber.Ctx) error {
 		choiceFlag := c.Params("flag")
 
@@ -415,7 +444,7 @@ func main() {
 				}
 
 			}
-			// Read JSON file, would it be better to just search for the JSON file in the filesystem
+			// Read JSON file
 			pathToJson := filepath.Join(workingDir, JSONFile)
 			byteValue, err := os.ReadFile(pathToJson)
 			if err != nil {
@@ -448,12 +477,7 @@ func main() {
 				result[iStruct].Preset_file_name = mapHashesNames[result[iStruct].Preset_file_name] + ".preset"
 				result[iStruct].User = ""
 			}
-			collectionJSONInfo, err := mongocode.GetMongoCollection(mongoInfo, "JSONInfo", client)
 
-			if err != nil {
-				c.SendString("Error, ask the admin to check the id:" + id.String())
-				return c.SendStatus(errorFunc.ErrorFormated(newRequest, mongoInfo, "E000025", err.Error(), client))
-			}
 			// Check if the files already exist
 			cursor, err := mongocode.SearchMongo("parent_package_name", fileNameOnly, collectionJSONInfo)
 			if err != nil {
@@ -595,16 +619,121 @@ func main() {
 	app.Delete("delete/:id", func(c *fiber.Ctx) error {
 		requestId := c.Params("id")
 		fmt.Println(requestId)
+
 		// search for it in mongoDB, and get all entries.
+		cursor, err := mongocode.SearchMongo("universal_uuid", requestId, collectionJSONInfo)
+		if err != nil {
+			if err == mongo.ErrNoDocuments {
+				c.SendString("We didn't find your ID.")
+			}
+			log.Println(err)
+			c.SendString("Error, deleting :" + requestId)
+			return c.SendStatus(500)
+		}
 
+		var results []JSONData
+		if err = cursor.All(context.TODO(), &results); err != nil {
+			log.Println(err)
+			c.SendString("Error, deleting :" + requestId)
+			return c.SendStatus(500)
+		}
 		// Check if the preset files are being used in any other id. For example get all the unique preset files hashes, and then
-		// search for this preset files hashes, check if this hashes have more that one id associated to them, get all unique id's and this should help.
 
+		var listOfHashes []string
+		for _, ele := range results {
+			currentHashName := ele.Preset_file_name
+			if !stringInSlice(currentHashName, listOfHashes) {
+				listOfHashes = append(listOfHashes, currentHashName)
+			}
+
+		}
+		// search for this preset files hashes.
+		cursor, err = mongocode.SearchMultipleMongo("preset_file_name", listOfHashes, collectionJSONInfo)
+		if err != nil {
+			if err == mongo.ErrNoDocuments {
+				c.SendString("We didn't find your ID.")
+			}
+			log.Println(err)
+			c.SendString("Error, deleting :" + requestId)
+			return c.SendStatus(500)
+		}
+		var presetResults []JSONData
+		if err = cursor.All(context.TODO(), &presetResults); err != nil {
+			log.Println(err)
+			c.SendString("Error, deleting :" + requestId)
+			return c.SendStatus(500)
+		}
+
+		//check if this hashes have more that one id associated to them, get all unique id's and this should help.
+		var idAssWithPreset []string
+		for _, ele := range presetResults {
+			currentId := ele.Universal_uuid
+			if !stringInSlice(currentId, idAssWithPreset) {
+				idAssWithPreset = append(idAssWithPreset, currentId)
+			}
+		}
+		var listToDelete []*s3.ObjectIdentifier
+		fmt.Println(listToDelete)
 		//Then delete all preset files IF they are not needed by other files. If they are ignore them.
+		if len(idAssWithPreset) == 1 {
+			for _, ele := range listOfHashes {
+				var b *s3.ObjectIdentifier = new(s3.ObjectIdentifier)
+				b.Key = aws.String("preset/" + ele)
+				listToDelete = append(listToDelete, b)
+			}
+			input := &s3.DeleteObjectsInput{
+				Bucket: aws.String(bucket),
+				Delete: &s3.Delete{
+					Objects: listToDelete,
+					Quiet:   aws.Bool(false),
+				},
+			}
+
+			_, err = svc.DeleteObjects(input)
+			if err != nil {
+				if aerr, ok := err.(awserr.Error); ok {
+					switch aerr.Code() {
+					default:
+						fmt.Println(aerr.Error())
+					}
+				} else {
+					// Print the error, cast err to awserr.Error to get the Code and
+					// Message from an error.
+					fmt.Println(err.Error())
+				}
+				return err
+			}
+		}
 		//Delete all image files related to the ID.
+		iter := s3manager.NewDeleteListIterator(svc, &s3.ListObjectsInput{
+			Bucket: aws.String(bucket),
+			Prefix: aws.String("img/" + requestId),
+		})
 
+		// use the iterator to delete the files.
+		go func() {
+			if err := s3manager.NewBatchDeleteWithClient(svc).Delete(ctx, iter); err != nil {
+				log.Print(err)
+			}
+		}()
 		// When this is over delete all mongodb entries relating to the ID
-
+		filter := bson.M{"universal_uuid": requestId}
+		result, err := collectionJSONInfo.DeleteMany(context.TODO(), filter)
+		if err != nil {
+			log.Println(err)
+		}
+		fmt.Println(result)
+		updatedRequest := &typeDef.RequestInfo{
+			Id:          requestId,
+			Status:      "Deleted",
+			ErrComplete: "none",
+			ErrCode:     "none",
+		}
+		requestStatusFilter := bson.M{"id": requestId}
+		_, err = collectionRequestStatus.ReplaceOne(context.TODO(), requestStatusFilter, updatedRequest)
+		if err != nil {
+			log.Println(err) //c.SendStatus(500)
+		}
 		return c.SendStatus(200)
 	})
 

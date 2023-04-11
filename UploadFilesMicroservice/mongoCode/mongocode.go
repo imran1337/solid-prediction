@@ -22,3 +22,12 @@ func SearchMongo(mongoKey string, mongoValue string, mongoColl *mongo.Collection
 	}
 	return cursor, nil
 }
+
+func SearchMultipleMongo(mongoKey string, mongoValue []string, mongoColl *mongo.Collection) (mongoCursor *mongo.Cursor, err error) {
+	filter := bson.M{mongoKey: bson.M{"$in": mongoValue}}
+	cursor, err := mongoColl.Find(context.TODO(), filter)
+	if err != nil {
+		return nil, err
+	}
+	return cursor, nil
+}

@@ -2,7 +2,7 @@ package errorFunc
 
 import (
 	"context"
-	"fmt"
+	"log"
 	mongocode "uploadfilesmicroservice/mongoCode"
 	typeDef "uploadfilesmicroservice/typeDef"
 
@@ -18,11 +18,11 @@ func ErrorFormated(requestInfo *typeDef.RequestInfo, mongoInfo *typeDef.MongoPar
 	filter := bson.D{{Key: "id", Value: requestInfo.Id}}
 	// If we get an error on the error func we have no fallback.
 	if err != nil {
-		fmt.Println(err) //c.SendStatus(500)
+		log.Println(err) //c.SendStatus(500)
 	}
 	_, err = collection.ReplaceOne(context.TODO(), filter, requestInfo)
 	if err != nil {
-		fmt.Println(err) //c.SendStatus(500)
+		log.Println(err) //c.SendStatus(500)
 	}
 	return 500
 }
