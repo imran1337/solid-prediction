@@ -18,7 +18,9 @@ import base64
 import hashlib
 from datetime import datetime
 
-environment = 'prod'
+
+environment = 'dev'
+
 if environment == 'dev':
     try:
         import dotenv
@@ -37,6 +39,7 @@ application = Flask(__name__)
 mongoClient = connectMongoQuestionsDB()
 # Mongo Global vars
 DB_NAME = "slim-prediction"
+DB_NAME = "slim-prediction-test"
 COLLECTION_NAME = "JSONInfo"
 AMOUNT_PARTS = 7.0
 

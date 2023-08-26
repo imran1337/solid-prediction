@@ -1,3 +1,5 @@
+import shutil
+
 from flask import Flask, request
 import boto3
 import os
@@ -9,8 +11,10 @@ import json
 from featureMap import Index
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
+import fileOperations
 
-# load_dotenv()
+from dotenv import load_dotenv
+load_dotenv(dotenv_path='../dot.env')
 def connectMongoQuestionsDB():
     mongoURI = os.getenv("MONGODB_URI")
     myclient = pymongo.MongoClient(mongoURI)
@@ -20,6 +24,14 @@ threadExecutor = ThreadPoolExecutor(1)
 dictUsers = {}
 application = Flask(__name__)
 mongoClient = connectMongoQuestionsDB()
+
+processing_complete = False
+
+# Define the signal handler for when processing is complete
+def processing_completed(signum, frame):
+    global processing_complete
+    processing_complete = True
+
 
 def _checkDBSession(clientDB):
     '''
@@ -44,21 +56,21 @@ def mongoReplace(id, errorMessage):
 
 # Mongo Global vars
 DB_NAME = "slim-prediction"
-COLLECTION_NAME = "JSONInfo"
+COLLECTION_NAME = "JSONInfo"#"Testing"
 
 
-def generateFeatureMapCreationTask(bucketName, content):
+def generateFeatureMapCreationTask(bucketName, id):
     '''
     Create as many threads as possible on this machine parallelizing the processing of an image into feature maps
     :param bucketName: S3 Bucket Name
-    :param content: UUID coming from the Go Server
+    :param id: UUID coming from the Go Server
     :return:
     '''
     fileTuples = []
 
     s3 = boto3.resource('s3')
     bucket = s3.Bucket(bucketName)
-    lstS3Files = list(bucket.objects.filter(Prefix="img/" + content['UUID']))
+    lstS3Files = list(bucket.objects.filter(Prefix="img/" + id))
 
     count = 100
     for idx in range(0, len(lstS3Files), count):
@@ -67,8 +79,7 @@ def generateFeatureMapCreationTask(bucketName, content):
     with ThreadPoolExecutor() as executor:
         args = []
         for fileChunkIdx in fileTuples:
-            args.append(
-                [bucketName, lstS3Files[fileChunkIdx[0]: fileChunkIdx[1]], content['UUID']])
+            args.append([bucketName, lstS3Files[fileChunkIdx[0]: fileChunkIdx[1]], id])
         results = executor.map(generateFeatureMap, args)
 
 
@@ -140,25 +151,81 @@ def getResult(id):
     else:
         return json.dumps({'id': id, 'result': -1, 'desc': 'not started yet'})
 
+# TODO: Add additional functions that either only upload the images or the presets or the DB entries, if something needs
+# to updated
+def process_file(filename, additionalInfo, fileId):
+    # Perform your long-running file processing task here
+    destPath = fileOperations.decrypt_file(filename, fileId)
+    additionalInfo = json.loads(additionalInfo)
+    additionalInfo['uuid'] = fileId
+    print('-2')
+    if destPath:
+        destZipPath = fileOperations.unzip_file(destPath)
+        print('-1')
+        if destZipPath:
+            jsonFiles = [obj for obj in os.listdir(destZipPath) if obj.endswith('.json')]
+            jsonPath = os.path.join(destZipPath, jsonFiles[0])
+            print(jsonPath)
+            additionalInfo['parent_package_name'] = os.path.basename(destZipPath)
+            print('0')
+            dictPresets = fileOperations.addJsonToMongo(jsonPath, additionalInfo, mongoClient, DB_NAME, COLLECTION_NAME)
+            print('1')
+            # Usage example
+            bucket = os.environ['S3_BUCKET']
+            session = boto3.Session()
+            s3_client = session.client("s3")
+            print('2')
+            fileOperations.uploadFileType(destZipPath, 'img', bucket, s3_client, fileId)
+            print('3')
+            fileOperations.uploadFileType(destZipPath, 'preset', bucket, s3_client, fileId, dictPresets)
+            print('4')
+            generateFeatureMapCreationTask(bucket, fileId)
+            print('5')
+        else:
+            print('Path not valid')
+    else:
+        print('Path not valid')
 
-@application.route("/set-feature-maps", methods=['POST'])
-def startFeatureMapMicroservice():
-    content = request.json
-    bucketName = os.getenv("S3_BUCKET")
-    id = content['UUID']
-    dictUsers[id] = threadExecutor.submit(
-        generateFeatureMapCreationTask, bucketName, content)
+    shutil.rmtree('static/upload/' + fileId)
 
+@application.route('/uploadFile', methods=['POST'])
+def upload_file():
+    file = request.files['file']
+    data = request.form.get('json_data')
+
+    filename = file.filename
+    fileId = fileOperations.getUniqueFileId()
+    destPath = 'static/upload/' + fileId
+    if not os.path.exists(destPath):
+        os.makedirs(destPath)
+
+    # Save the uploaded file to a desired location
+    filePath = os.path.join(destPath, filename)
+    file.save(filePath)
+
+    dictUsers[fileId] = threadExecutor.submit(process_file, filePath, data, fileId)
+    session = _checkDBSession(mongoClient)
     if not session:
-        mongoReplace(id, 'Error getting the Feature Map MS DB.')
+        mongoReplace(fileId, 'Error getting the Feature Map MS DB.')
 
-    return json.dumps({'id': id})
+    return json.dumps({'id': fileId})
+
+    # Start the file processing task using ThreadPoolExecutor
+    #with ThreadPoolExecutor() as executor:
+    #    executor.submit(process_file, filePath, data)
+
+    #return 'File uploaded successfully.'
+
+# Create an endpoint to check the processing status
+@application.route('/status', methods=['GET'])
+def check_status():
+    global processing_complete
+    return 'Processing complete' if processing_complete else 'Processing in progress'
 
 
 @ application.route("/", methods=['GET'])
 def index():
     return 'Running'
-
 
 if __name__ == '__main__':
     application.run(debug=True, threaded=True)

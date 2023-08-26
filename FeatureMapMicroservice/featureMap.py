@@ -9,7 +9,7 @@ import numpy
 import os
 import io
 tf.compat.v1.logging.set_verbosity(tf.compat.v1.logging.ERROR)
-
+tf.config.set_visible_devices([], 'GPU')
 
 class Index:
 
