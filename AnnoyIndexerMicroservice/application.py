@@ -1,6 +1,5 @@
 from flask import Flask, request, current_app, send_file
 from cryptography.fernet import Fernet as F
-from botocore.client import Config
 import boto3
 from botocore.exceptions import ClientError
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -13,24 +12,10 @@ import pymongo
 import pandas
 import json
 import zipfile
-import uuid
 import shutil
 import base64
 import hashlib
 from datetime import datetime
-import logging
-
-# Set up logging
-logging.basicConfig(filename='s3_debug.log', level=logging.DEBUG)
-
-# Enable logging for boto3
-logger = logging.getLogger('boto3')
-logger.setLevel(logging.DEBUG)
-
-# Enable logging for botocore
-logger = logging.getLogger('botocore')
-logger.setLevel(logging.DEBUG)
-
 
 environment = 'dev'
 
@@ -38,25 +23,68 @@ if environment == 'dev':
     try:
         import dotenv
         dotenv.load_dotenv()
-    except:
+    except ImportError:
         pass
 
-
-def connectMongoQuestionsDB():
-    mongoURI = os.getenv("MONGODB_URI")
-    print("MONGODB_URI:", mongoURI)
-    myclient = pymongo.MongoClient(mongoURI)
-    return myclient
-
-threadExecutor = ThreadPoolExecutor()
-dictUsers = {}
+# Flask application
 application = Flask(__name__)
-mongoClient = connectMongoQuestionsDB()
+
+# Thread executor
+thread_executor = ThreadPoolExecutor(max_workers=2)
+
+# MongoDB connection
+def connect_mongo_questions_db():
+    mongo_uri = os.getenv("MONGODB_URI")
+    my_client = pymongo.MongoClient(mongo_uri)
+    return my_client
+
+# Split folder names
+def split_folder_names(download_folder_path):
+    if not os.path.exists(download_folder_path) or not os.path.isdir(download_folder_path):
+        return []
+
+    folder_names = [folder for folder in os.listdir(download_folder_path) if os.path.isdir(os.path.join(download_folder_path, folder))]
+
+    result_list = []
+    for folder_name in folder_names:
+        parts = folder_name.split(" ", 1)
+        if len(parts) == 2:
+            result_list.append({'vendor': parts[0], 'category': parts[1]})
+        else:
+            result_list.append({'vendor': folder_name, 'category': ''})
+
+    return result_list
+
+# Get zip file path
+def get_zip_file_path(download_folder_path: str, folder_name: str, identifier: str):
+    zip_location = os.path.join(download_folder_path, folder_name, f"{identifier}.zip")
+    return zip_location
+
+# Initialize default values for dictionary of users
+def init_default_value_for_dict_users():
+    global dictUsers
+    download_folder_path = os.path.join(application.root_path, 'DownloadFiles')
+    result = split_folder_names(download_folder_path)
+
+    for item in result:
+        identifier = f"{item['vendor']}_{item['category']}"
+        folder_name = f"{item['vendor']} {item['category']}"
+        dictUsers[identifier] = thread_executor.submit(
+            get_zip_file_path, download_folder_path, folder_name, identifier)
+
+# Global variables
+dictUsers = {}
+dictUsersForJobs = {}
+mongo_client = connect_mongo_questions_db()
+
 # Mongo Global vars
 DB_NAME = "slim-prediction"
 # DB_NAME = "slim-prediction-test"
 COLLECTION_NAME = "JSONInfo"
 AMOUNT_PARTS = 7.0
+
+# Initialize default values
+init_default_value_for_dict_users()
 
 def _checkDBSession(clientDB):
     '''
@@ -73,7 +101,7 @@ def _checkDBSession(clientDB):
     return clientDB
 
 def mongoReplace(id, errorMessage):
-    session = _checkDBSession(mongoClient)
+    session = _checkDBSession(mongo_client)
     if session:
         collection = session[DB_NAME]["AnnoyIndexerErrors"]
         collection.replace_one(
@@ -126,14 +154,14 @@ def downloadPackage(args):
 
     return [results, featureLen, subTaskId]
 
-def generateAnnoyIndexerTask(currentPath, vendor, category, generatedUUID):
+def generateAnnoyIndexerTask(currentPath, vendor, category):
     start_time = time.time()
 
     # Init AWS
     bucketName = os.getenv("S3_BUCKET")
 
     # Init MongoDB
-    session = _checkDBSession(mongoClient)
+    session = _checkDBSession(mongo_client)
     if not session:
         elapsed_time = time.time() - start_time
         print(f"Fetching data time: {elapsed_time} seconds")
@@ -176,18 +204,18 @@ def generateAnnoyIndexerTask(currentPath, vendor, category, generatedUUID):
 
     # Log or print fileTuples
     print("fileTuples:")
-    print(json.dumps(fileTuples, indent=2))
+    # print(json.dumps(fileTuples, indent=2))
 
     # Log or print featureFiles
     print("featureFiles:")
-    print(json.dumps(featureFiles, indent=2))
+    # print(json.dumps(featureFiles, indent=2))
 
     subTaskId = 0
     total_requests_sent = 0  # Variable to track the total number of requests sent
 
     with ThreadPoolExecutor() as executor:
         args = []
-        for fileChunkIdx in fileTuples:
+        for fileChunkIdx in fileTuples[:1]:
             args.append(
                 [bucketName, featureFiles[fileChunkIdx[0]: fileChunkIdx[1]], subTaskId])
             subTaskId += 1
@@ -219,7 +247,7 @@ def generateAnnoyIndexerTask(currentPath, vendor, category, generatedUUID):
 
     downloadLocation = currentPath + '/DownloadFiles'
     downloadTotalPath = os.path.join(
-        currentPath, downloadLocation, generatedUUID)
+        currentPath, downloadLocation, vendor + ' ' + category)
     print('Start Indexing')
 
     indexing_start_time = time.time()
@@ -236,14 +264,16 @@ def generateAnnoyIndexerTask(currentPath, vendor, category, generatedUUID):
 
     print('Write output')
     encryption_start_time = time.time()
+    # with open(jsonPath, "w") as outfile:
+    #     outfile.write(encryptMessage(os.getenv('ENCRYPTION_KEY'), json_object))
     with open(jsonPath, "w") as outfile:
-        outfile.write(encryptMessage(os.getenv('ENCRYPTION_KEY'), json_object))
+        outfile.write(json_object)
     encryption_elapsed_time = time.time() - encryption_start_time
 
     # Download Both
     # Zip files
     print('Zip stuff')
-    zipLocation = os.path.join(downloadTotalPath, generatedUUID + ".zip")
+    zipLocation = os.path.join(downloadTotalPath, vendor + '_' + category + ".zip")
 
     zip_start_time = time.time()
     with zipfile.ZipFile(zipLocation, 'w', zipfile.ZIP_DEFLATED) as zipObj:
@@ -289,11 +319,24 @@ def encryptMessage(key, msg):
 
 @application.route("/annoy-indexer-setup/<vendor>/<cat>", methods=['GET'])
 def annoyIndexer(vendor, cat):
-    id = str(uuid.uuid4())
-    dictUsers[id] = threadExecutor.submit(
-        generateAnnoyIndexerTask, current_app.root_path, vendor, cat, id)
+    id = str(vendor + '_' + cat)
+    if id not in dictUsers:
+        dictUsers[id] = thread_executor.submit(
+            generateAnnoyIndexerTask, current_app.root_path, vendor, cat)
     # Init MongoDB
-    session = _checkDBSession(mongoClient)
+    session = _checkDBSession(mongo_client)
+    if not session:
+        mongoReplace(id, 'Error getting the DB for Annoy IDX')
+    return json.dumps({'id': id})
+
+
+@application.route("/job/annoy-indexer-setup/<vendor>/<cat>", methods=['GET'])
+def annoyIndexerJob(vendor, cat):
+    id = str(vendor + '_' + cat)
+    dictUsersForJobs[id] = thread_executor.submit(
+        generateAnnoyIndexerTask, current_app.root_path, vendor, cat)
+    # Init MongoDB
+    session = _checkDBSession(mongo_client)
     if not session:
         mongoReplace(id, 'Error getting the DB for Annoy IDX')
     return json.dumps({'id': id})
@@ -309,6 +352,21 @@ def getAnnoyIndexer(id):
         return json.dumps({'id': id, 'result': 'cancelled'})
     elif dictUsers[id].done():
         return send_file(dictUsers[id].result(), as_attachment=True)
+    else:
+        return json.dumps({'id': id, 'result': 'not started yet'})
+
+@application.route("/job/get-annoy-indexer/<id>", methods=['GET'])
+def getAnnoyIndexerJob(id):
+    if id not in dictUsersForJobs:
+        return json.dumps({'id': id, 'result': 'id unknown'})
+    elif dictUsersForJobs[id].running():
+        return json.dumps({'id': id, 'result': 'running'})
+    elif dictUsersForJobs[id].cancelled():
+        return json.dumps({'id': id, 'result': 'cancelled'})
+    elif dictUsersForJobs[id].done():
+        # Update dictUsers when job is completed
+        dictUsers[id] = dictUsersForJobs[id]
+        return send_file(dictUsersForJobs[id].result(), as_attachment=True)
     else:
         return json.dumps({'id': id, 'result': 'not started yet'})
 
@@ -335,7 +393,7 @@ def removeAnnoyIndexer(id):
 @application.route("/find-matching-part", methods=['POST'])
 def findMatchingPart():
     content = request.json
-    session = _checkDBSession(mongoClient)
+    session = _checkDBSession(mongo_client)
     dictToReturn = {}
     if session:
         mycol = session[DB_NAME][COLLECTION_NAME]
