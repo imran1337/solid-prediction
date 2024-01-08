@@ -1,9 +1,9 @@
-from flask import Flask, request, current_app, send_file
+from flask import Flask, request, current_app, redirect, abort
+from pathlib import Path
 from cryptography.fernet import Fernet as F
 import boto3
 from botocore.exceptions import ClientError
 from concurrent.futures import ThreadPoolExecutor, as_completed
-import time
 import tqdm
 import os
 from annoy import AnnoyIndex
@@ -11,11 +11,14 @@ import numpy
 import pymongo
 import pandas
 import json
-import zipfile
+import io
 import shutil
 import base64
 import hashlib
-from datetime import datetime
+from datetime import datetime, timedelta
+from google.cloud import storage
+from zipfile import ZipFile, ZipInfo
+from google.api_core.exceptions import NotFound
 
 environment = 'dev'
 
@@ -25,6 +28,13 @@ if environment == 'dev':
         dotenv.load_dotenv()
     except ImportError:
         pass
+
+# Set up Google Cloud Storage client
+gcs_client = storage.Client()
+
+# Your Google Cloud Storage bucket name
+gcs_bucket_name = os.getenv("GOOGLE_CLOUD_BUCKET_ID")
+gcs_bucket = gcs_client.bucket(gcs_bucket_name)
 
 # Flask application
 application = Flask(__name__)
@@ -38,39 +48,33 @@ def connect_mongo_questions_db():
     my_client = pymongo.MongoClient(mongo_uri)
     return my_client
 
-# Split folder names
-def split_folder_names(download_folder_path):
-    if not os.path.exists(download_folder_path) or not os.path.isdir(download_folder_path):
-        return []
-
-    folder_names = [folder for folder in os.listdir(download_folder_path) if os.path.isdir(os.path.join(download_folder_path, folder))]
-
-    result_list = []
-    for folder_name in folder_names:
-        parts = folder_name.split(" ", 1)
-        if len(parts) == 2:
-            result_list.append({'vendor': parts[0], 'category': parts[1]})
-        else:
-            result_list.append({'vendor': folder_name, 'category': ''})
-
-    return result_list
-
-# Get zip file path
-def get_zip_file_path(download_folder_path: str, folder_name: str, identifier: str):
-    zip_location = os.path.join(download_folder_path, folder_name, f"{identifier}.zip")
-    return zip_location
+def get_zip_file_url(identifier: str):
+    signed_url = generate_signed_url(f'{identifier}.zip')
+    return signed_url
 
 # Initialize default values for dictionary of users
 def init_default_value_for_dict_users():
     global dictUsers
-    download_folder_path = os.path.join(application.root_path, 'DownloadFiles')
-    result = split_folder_names(download_folder_path)
+    
+    # Get folder names from GCS bucket
+    try:
+        blobs = gcs_bucket.list_blobs()
+        folder_names = set()
 
-    for item in result:
-        identifier = f"{item['vendor']}_{item['category']}"
-        folder_name = f"{item['vendor']} {item['category']}"
-        dictUsers[identifier] = thread_executor.submit(
-            get_zip_file_path, download_folder_path, folder_name, identifier)
+        for blob in blobs:
+            # Extract the folder name from the object's path
+            folder_name = blob.name.replace(".zip", '')
+            folder_names.add(folder_name)
+
+        # Process folder names and create dictionary entries
+        for folder_name in folder_names:
+            identifier = folder_name
+            dictUsers[identifier] = thread_executor.submit(
+                get_zip_file_url, identifier)
+    
+    except NotFound:
+        # Handle the case where the bucket or objects are not found
+        print("Bucket or objects not found in GCS.")
 
 # Global variables
 dictUsers = {}
@@ -151,6 +155,25 @@ def downloadPackage(args):
 
     return [results, featureLen, subTaskId]
 
+def generate_signed_url(object_name: str, expiration_time=900):
+    try:
+        blob = gcs_bucket.blob(object_name)
+
+        expiration_time = timedelta(seconds=expiration_time)
+        expiration = datetime.utcnow() + expiration_time
+
+        signed_url = blob.generate_signed_url(
+            expiration=expiration,
+            version='v4',
+            method='GET',
+        )
+
+        return signed_url
+
+    except NotFound:
+        # Handle the case where the object is not found
+        return None
+
 def generateAnnoyIndexerTask(currentPath, vendor, category):
     # Init AWS
     bucketName = os.getenv("S3_BUCKET")
@@ -190,7 +213,7 @@ def generateAnnoyIndexerTask(currentPath, vendor, category):
 
     with ThreadPoolExecutor() as executor:
         args = []
-        for fileChunkIdx in fileTuples:
+        for fileChunkIdx in fileTuples[:1]:
             args.append(
                 [bucketName, featureFiles[fileChunkIdx[0]: fileChunkIdx[1]], subTaskId])
             subTaskId += 1
@@ -230,18 +253,28 @@ def generateAnnoyIndexerTask(currentPath, vendor, category):
     # Download Both
     # Zip files
     print('Zip stuff')
-    zipLocation = os.path.join(downloadTotalPath, vendor + '_' + category + ".zip")
+    
+    archive = io.BytesIO()
+    with ZipFile(archive, 'w') as zip_archive:
+        for file_path in Path(downloadTotalPath).iterdir():
+            with open(file_path, 'rb') as file:
+                zip_entry_name = file_path.name
+                zip_file = ZipInfo(zip_entry_name)
+                zip_archive.writestr(zip_file, file.read())
 
-    with zipfile.ZipFile(zipLocation, 'w', zipfile.ZIP_DEFLATED) as zipObj:
-        zipObj.write(jsonPath, os.path.basename(jsonPath))
-        zipObj.write(indexerPath, os.path.basename(indexerPath))
+    archive.seek(0)
+
+    object_name = f"{vendor}_{category}.zip"
+
+    blob = storage.Blob(object_name, gcs_bucket)
+    blob.upload_from_file(archive, content_type='application/zip')
 
     # Cleanup files
-    os.remove(jsonPath)
-    os.remove(indexerPath)
+    shutil.rmtree(downloadTotalPath)
 
-    return zipLocation
+    signed_url = generate_signed_url(object_name)
 
+    return signed_url
 
 
 def generateFernetKey(passcode):
@@ -293,7 +326,13 @@ def getAnnoyIndexer(id):
     elif dictUsers[id].cancelled():
         return json.dumps({'id': id, 'result': 'cancelled'})
     elif dictUsers[id].done():
-        return send_file(dictUsers[id].result(), as_attachment=True)
+        object_name = f'{id}.zip'
+        signed_url = generate_signed_url(object_name)
+        if signed_url is not None:
+            return redirect(signed_url)
+        else:
+            # Return a 404 response for file not found
+            abort(404, 'File not found')
     else:
         return json.dumps({'id': id, 'result': 'not started yet'})
 
@@ -308,7 +347,12 @@ def getAnnoyIndexerJob(id):
     elif dictUsersForJobs[id].done():
         # Update dictUsers when job is completed
         dictUsers[id] = dictUsersForJobs[id]
-        return send_file(dictUsersForJobs[id].result(), as_attachment=True)
+        gcs_zip_url = dictUsersForJobs[id].result()
+        if gcs_zip_url is not None:
+            return redirect(gcs_zip_url)
+        else:
+            # Return a 404 response for file not found
+            abort(404, 'File not found')
     else:
         return json.dumps({'id': id, 'result': 'not started yet'})
 

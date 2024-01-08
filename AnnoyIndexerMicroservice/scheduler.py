@@ -13,16 +13,7 @@ class Vendor:
 
 vendor_information = [
     Vendor("Volkswagen", "LOD_1"),
-    Vendor("Volkswagen", "LOD_3"),
-    Vendor("Volkswagen", "LOD_4"),
-    Vendor("Volkswagen", "LOD_5"),
-    Vendor("Volkswagen", "LOD_6"),
-    Vendor("Volkswagen", "LOD_7"),
-    Vendor("Volkswagen", "LOD_8"),
-    Vendor("Volkswagen", "LOD_9"),
-    Vendor("Volkswagen", "LOD_1"),
-    Vendor("Volkswagen", "LOD_11"),
-    Vendor("Volkswagen", "LOD_12"),
+    # Vendor("Volkswagen", "LOD_9")
 ]
 
 isRunning = False
@@ -84,4 +75,4 @@ schedule.every(10).seconds.do(job)
 
 while 1:
     schedule.run_pending()
-    time.sleep(1)
+    time.sleep(10)
