@@ -187,3 +187,6 @@ cython_debug/
 */output
 */*/002-others.config
 */decrypt
+
+.DS_Store
+.idea/
