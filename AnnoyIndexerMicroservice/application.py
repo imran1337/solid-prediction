@@ -120,18 +120,15 @@ def startIndexing(image_data, indexerPath, vendor, category):
     t.build(100)  # 100 trees
     t.save(os.path.join(indexerPath, vendor + '_' + category + '_fvecs.ann'))
 
-
-# s3 = boto3.resource('s3', config=Config(signature_version='s3v4', s3={'use_accelerate_endpoint': True}))
-
-s3 = boto3.resource('s3')
+try:
+    s3 = boto3.resource('s3')
+except Exception as error:
+    print(error)
 
 def downloadPackage(args):
     bucketName = args[0]
     package = args[1]
     subTaskId = args[2]
-
-    # Connect to S3
-    s3 = boto3.resource('s3')
 
     def download_single_object(obj):
         try:
@@ -155,35 +152,26 @@ def downloadPackage(args):
     return [results, featureLen, subTaskId]
 
 def generateAnnoyIndexerTask(currentPath, vendor, category):
-    start_time = time.time()
-
     # Init AWS
     bucketName = os.getenv("S3_BUCKET")
 
     # Init MongoDB
     session = _checkDBSession(mongo_client)
     if not session:
-        elapsed_time = time.time() - start_time
-        print(f"Fetching data time: {elapsed_time} seconds")
         return 'DB not reachable', 500
 
     mycol = session[DB_NAME][COLLECTION_NAME]
     temp = []
 
     # Check MongoDB to see if the JSON files have a Preset File
-    mongo_start_time = time.time()
     mypresetquery = {"preset_file_name": {"$exists": True},
                   "vendor": vendor, 'category': category}
     mydoc = mycol.find(mypresetquery, {"image_file_names": 1})
-    mongo_elapsed_time = time.time() - mongo_start_time
 
-    print(f"mydoc: {mydoc}")
 
     for x in mydoc:
         temp += x["image_file_names"]
     if len(temp) == 0:
-        elapsed_time = time.time() - start_time
-        print(f"Fetching data time: {elapsed_time} seconds")
         return "Not Acceptable", 406
 
     imagesDict = {"image_file_names": temp}
@@ -198,31 +186,16 @@ def generateAnnoyIndexerTask(currentPath, vendor, category):
     for idx in range(0, len(featureFiles), count):
         fileTuples.append((idx, min(idx + count, len(featureFiles))))
 
-    # Log or print the count of items in fileTuples and featureFiles
-    print(f"fileTuples count: {len(fileTuples)}")
-    print(f"featureFiles count: {len(featureFiles)}")
-
-    # Log or print fileTuples
-    print("fileTuples:")
-    # print(json.dumps(fileTuples, indent=2))
-
-    # Log or print featureFiles
-    print("featureFiles:")
-    # print(json.dumps(featureFiles, indent=2))
-
     subTaskId = 0
-    total_requests_sent = 0  # Variable to track the total number of requests sent
 
     with ThreadPoolExecutor() as executor:
         args = []
-        for fileChunkIdx in fileTuples[:1]:
+        for fileChunkIdx in fileTuples:
             args.append(
                 [bucketName, featureFiles[fileChunkIdx[0]: fileChunkIdx[1]], subTaskId])
             subTaskId += 1
 
-        download_start_time = time.time()
         results = list(executor.map(downloadPackage, args))
-        download_elapsed_time = time.time() - download_start_time
 
         idx = 0
         for obj in results:
@@ -231,28 +204,16 @@ def generateAnnoyIndexerTask(currentPath, vendor, category):
                 imagesDict['length'] = obj[1]
             idx += 1
 
-            # Increment the total number of requests sent
-            total_requests_sent += len(args[idx-1][1])
-
-    print(len(arrayParts), len(featureFiles))
-
-    print(f"arrayParts count: {len(arrayParts)}")
-
-
     # Create a dataframe and create the indexer
-    df_start_time = time.time()
     df = pandas.DataFrame()
     df['features'] = arrayParts
-    df_elapsed_time = time.time() - df_start_time
 
     downloadLocation = currentPath + '/DownloadFiles'
     downloadTotalPath = os.path.join(
         currentPath, downloadLocation, vendor + ' ' + category)
     print('Start Indexing')
 
-    indexing_start_time = time.time()
     startIndexing(df, downloadTotalPath, vendor, category)
-    indexing_elapsed_time = time.time() - indexing_start_time
 
     indexerPath = os.path.join(
         downloadTotalPath, vendor + '_' + category + '_fvecs.ann')
@@ -263,40 +224,21 @@ def generateAnnoyIndexerTask(currentPath, vendor, category):
                             '_' + category + "_info.json")
 
     print('Write output')
-    encryption_start_time = time.time()
-    # with open(jsonPath, "w") as outfile:
-    #     outfile.write(encryptMessage(os.getenv('ENCRYPTION_KEY'), json_object))
     with open(jsonPath, "w") as outfile:
-        outfile.write(json_object)
-    encryption_elapsed_time = time.time() - encryption_start_time
+        outfile.write(encryptMessage(os.getenv('ENCRYPTION_KEY'), json_object))
 
     # Download Both
     # Zip files
     print('Zip stuff')
     zipLocation = os.path.join(downloadTotalPath, vendor + '_' + category + ".zip")
 
-    zip_start_time = time.time()
     with zipfile.ZipFile(zipLocation, 'w', zipfile.ZIP_DEFLATED) as zipObj:
         zipObj.write(jsonPath, os.path.basename(jsonPath))
         zipObj.write(indexerPath, os.path.basename(indexerPath))
-    zip_elapsed_time = time.time() - zip_start_time
 
     # Cleanup files
-    cleanup_start_time = time.time()
     os.remove(jsonPath)
     os.remove(indexerPath)
-    cleanup_elapsed_time = time.time() - cleanup_start_time
-
-    elapsed_time = time.time() - start_time
-    print(f"Total time for generateAnnoyIndexerTask: {elapsed_time} seconds")
-    print(f"Total requests sent: {total_requests_sent}")
-    print(f"MongoDB time: {mongo_elapsed_time} seconds")
-    print(f"Download time: {download_elapsed_time} seconds")
-    print(f"DataFrame time: {df_elapsed_time} seconds")
-    print(f"Indexing time: {indexing_elapsed_time} seconds")
-    print(f"Encryption time: {encryption_elapsed_time} seconds")
-    print(f"Zip time: {zip_elapsed_time} seconds")
-    print(f"Cleanup time: {cleanup_elapsed_time} seconds")
 
     return zipLocation
 
