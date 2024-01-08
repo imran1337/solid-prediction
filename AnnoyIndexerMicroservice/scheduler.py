@@ -1,6 +1,5 @@
 import schedule
 import time
-import time
 import requests
 
 # URL for getting the annoy indexer from
