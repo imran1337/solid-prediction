@@ -155,12 +155,14 @@ def downloadPackage(args):
 
     return [results, featureLen, subTaskId]
 
-def generate_signed_url(object_name: str, expiration_time=900):
+def generate_signed_url(object_name: str):
     try:
         blob = gcs_bucket.blob(object_name)
 
-        expiration_time = timedelta(seconds=expiration_time)
-        expiration = datetime.utcnow() + expiration_time
+        # Fetch expiration_time from environment variable or use a default value (900 seconds)
+        expiration_time = int(os.getenv("EXPIRATION_TIME_SECONDS", 900))
+
+        expiration = datetime.utcnow() + timedelta(seconds=expiration_time)
 
         signed_url = blob.generate_signed_url(
             expiration=expiration,
