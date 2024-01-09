@@ -1,14 +1,9 @@
-'''
-Test Data
-'''
-
-
 import os
 import requests
 import time
 from tqdm import tqdm
 from urllib.parse import unquote
-import cgi
+from urllib.parse import urlparse, unquote
 
 # URL for getting the annoy indexer from
 SERVER_URI = 'http://127.0.0.1:5000'
@@ -18,25 +13,15 @@ FM_SERVER_URI = 'http://slim-feature-map-ms.eba-pibymigp.eu-central-1.elasticbea
 def download_file_from_signed_url(signed_url, destination_dir):
     """Download a file from a signed URL with a progress bar."""
     with requests.get(signed_url, stream=True) as r:
-        r.raise_for_status()
+        try:
+            r.raise_for_status()
+        except requests.exceptions.RequestException as e:
+            return False, f'Request Error: {e}'
 
-        # Extract the filename from Content-Disposition header
-        content_disposition = r.headers.get('content-disposition')
-        if content_disposition:
-            _, params = cgi.parse_header(content_disposition)
-            suggested_filename = params.get('filename', None)
-            if suggested_filename:
-                suggested_filename = unquote(suggested_filename)
-            else:
-                suggested_filename = 'package.zip'
-        else:
-            suggested_filename = 'package.zip'
-
-        # Ensure the destination directory exists
-        os.makedirs(destination_dir, exist_ok=True)
-
-        # Determine the full destination path
-        destination_path = os.path.join(destination_dir, suggested_filename)
+        # Extract the filename from the URL path
+        url_path = urlparse(r.url).path
+        filename = os.path.basename(unquote(url_path))
+        destination_path = os.path.join(destination_dir, filename)
 
         total_size = int(r.headers.get('content-length', 0))
         block_size = 1024
@@ -53,7 +38,7 @@ def download_file_from_signed_url(signed_url, destination_dir):
                 pbar.update(len(chunk))
                 time.sleep(0.1)
 
-        return destination_path
+        return True, destination_path
 
 isRunning = False
 
@@ -64,10 +49,9 @@ def generateIndexer(indexerPath, vendor, category):
     :param category: Category which Indexer to get
     return: True, '' on success, False, Error description otherwise
     '''
-    indexerPath = os.path.join(indexerPath, 'models') #, vendor
+    indexerPath = os.path.join(indexerPath, 'models')  #, vendor
     if not os.path.exists(indexerPath):
         os.makedirs(indexerPath)
-    #print(indexerPath)
 
     wrote = 0
     strReq = SERVER_URI + '/annoy-indexer-setup/' + vendor + '/' + category
@@ -75,38 +59,44 @@ def generateIndexer(indexerPath, vendor, category):
     strTaskId = None
     try:
         with requests.get(strReq, stream=True) as r:
+            r.raise_for_status()
             if r.status_code == 200:
-                strTaskId = r.json()['id']
-    except requests.exceptions.ConnectionError:
-        return False, 'Connection Error: Could not generate Task-Id on Server.'
+                strTaskId = r.json().get('id')
+    except requests.exceptions.RequestException as e:
+        return False, f'Request Error: {e}'
 
-    if strTaskId == None:
+    if strTaskId is None:
         return False, 'Connection Error: Could not get a valid Task Id from Server.'
 
     result = True
     while result:
         strReq = SERVER_URI + '/get-annoy-indexer/' + strTaskId
         with requests.get(strReq, stream=True) as r:
-            if r.status_code == 200:
-                result = r.json()['result']
+            try:
+                r.raise_for_status()
+                result = r.json().get('result')
+            except requests.exceptions.RequestException as e:
+                return False, f'Request Error: {e}'
 
-                if result == 'running' or result == 'not started yet':
-                    time.sleep(1)
-                elif result == 'cancelled':
-                    return False, 'Process cancelled by the server.'
-                elif result == 'done':
-                    fileUrl = r.json()['fileUrl']
-                    # Download and save the file
-                    download_path = os.path.join(indexerPath, vendor, category)
-                    download_file_from_signed_url(fileUrl, download_path)
+            if result == 'running' or result == 'not started yet':
+                time.sleep(1)
+            elif result == 'cancelled':
+                return False, 'Process cancelled by the server.'
+            elif result == 'done':
+                fileUrl = r.json().get('fileUrl')
+                # Download and save the file
+                download_path = os.path.join(indexerPath, vendor, category)
+                success, download_result = download_file_from_signed_url(fileUrl, download_path)
 
-                    return True, 'Generated valid indexer file.'
+                if success:
+                    return True, f'Generated valid indexer file. Downloaded to: {download_result}'
                 else:
-                    return False, 'Undefined state on Server for the current task.'
+                    return False, f'Error during file download: {download_result}'
             else:
-                return False, 'Could not generate a valid indexer, code: %s.' % (r.status_code)
+                return False, 'Undefined state on Server for the current task.'
 
     return False, 'Could not start generating indexer.'
+
 
 def findmatchingPart(lstVisuals):
     parts = {}

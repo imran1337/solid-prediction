@@ -17,7 +17,6 @@ vendor_information = [
 
 isRunning = False
 
-
 def generateIndexer(vendor, category):
     '''
     Download the annoy indexer for the given vendor and the given category
@@ -25,16 +24,19 @@ def generateIndexer(vendor, category):
     :param category: Category which Indexer to get
     return: True, '' on success, False, Error description otherwise
     '''
-   
     strReq = SERVER_URI + '/job/annoy-indexer-setup/' + vendor + '/' + category
 
-    strTaskId = None
     try:
         with requests.get(strReq, stream=True) as r:
+            r.raise_for_status()
             if r.status_code == 200:
-                strTaskId = r.json()['id']
-    except requests.exceptions.ConnectionError:
-        return False, 'Connection Error: Could not generate Task-Id on Server.'
+                strTaskId = r.json().get('id')
+    except requests.exceptions.ConnectionError as e:
+        return False, f'Connection Error: {e}'
+    except requests.exceptions.RequestException as e:
+        return False, f'Request Error: {e}'
+    except ValueError as e:
+        return False, f'Error decoding JSON: {e}'
 
     if strTaskId is None:
         return False, 'Connection Error: Could not get a valid Task Id from Server.'
@@ -42,20 +44,22 @@ def generateIndexer(vendor, category):
     while True:
         strReq = SERVER_URI + '/job/get-annoy-indexer/' + strTaskId
         with requests.get(strReq, stream=True) as r:
+            try:
+                r.raise_for_status()
+                result = r.json().get('result')
+            except requests.exceptions.RequestException as e:
+                return False, f'Request Error: {e}'
+            except ValueError as e:
+                return False, f'Error decoding JSON: {e}'
 
-            if r.status_code == 200:
-                result = r.json()['result']
-
-                if result == 'running' or result == 'not started yet':
-                    time.sleep(1)
-                elif result == 'cancelled':
-                    return False, 'Process cancelled by the server.'
-                elif result == 'done':
-                    return True, 'Generated valid indexer file.'
-                else:
-                    return False, 'Undefined state on Server for the current task.'
+            if result == 'running' or result == 'not started yet':
+                time.sleep(1)
+            elif result == 'cancelled':
+                return False, 'Process cancelled by the server.'
+            elif result == 'done':
+                return True, 'Generated valid indexer file.'
             else:
-                return False, 'Could not generate a valid indexer, code: %s.' % (r.status_code)
+                return False, 'Undefined state on Server for the current task.'
 
 def job():
     global isRunning
