@@ -231,10 +231,16 @@ def generateAnnoyIndexerTask(currentPath, vendor, category):
 
     with ThreadPoolExecutor() as executor:
         args = []
-        for fileChunkIdx in fileTuples[:1]:
-            args.append(
-                [bucketName, featureFiles[fileChunkIdx[0]: fileChunkIdx[1]], subTaskId])
-            subTaskId += 1
+        
+        if environment == 'dev':
+            for fileChunkIdx in fileTuples[:1]:
+                args.append([bucketName, featureFiles[fileChunkIdx[0]: fileChunkIdx[1]], subTaskId])
+                subTaskId += 1
+        else:
+            for fileChunkIdx in fileTuples:
+                args.append([bucketName, featureFiles[fileChunkIdx[0]: fileChunkIdx[1]], subTaskId])
+                subTaskId += 1
+
 
         results = list(executor.map(downloadPackage, args))
 
