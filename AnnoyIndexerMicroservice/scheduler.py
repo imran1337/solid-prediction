@@ -1,6 +1,7 @@
 import schedule
 import time
 import requests
+import os
 
 # URL for getting the annoy indexer from
 SERVER_URI = 'http://127.0.0.1:5000'
@@ -71,8 +72,11 @@ def job():
                 print(f"Error generating indexer for {vendor} - {category}: {message}")
         isRunning = False
 
-schedule.every(10).seconds.do(job)
- # schedule.every().day.at("00:00").do(job)
+# Fetch the schedule interval from environment variables (default to 12 hours / 43200 seconds)
+schedule_interval = int(os.getenv("SCHEDULE_INTERVAL_SECONDS", 43200))
+
+# Schedule the job with the specified interval
+schedule.every(schedule_interval).seconds.do(job)
 
 while 1:
     schedule.run_pending()
