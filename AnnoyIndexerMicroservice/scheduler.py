@@ -12,7 +12,6 @@ class Vendor:
 
 vendor_information = [
     Vendor("Volkswagen", "LOD_1"),
-    # Vendor("Volkswagen", "LOD_9")
 ]
 
 isRunning = False
@@ -42,17 +41,20 @@ def generateIndexer(vendor, category):
     while True:
         strReq = SERVER_URI + '/job/get-annoy-indexer/' + strTaskId
         with requests.get(strReq, stream=True) as r:
+
             if r.status_code == 200:
-                if 'text/html' in r.headers['content-type']:
-                    if r.json()['result'] != 'running' and r.json()['result'] != 'not started yet':
-                        return False, 'Connection Error: Undefined state on Server for current task.'
+                result = r.json()['result']
+
+                if result == 'running' or result == 'not started yet':
                     time.sleep(1)
-                elif 'application/x-zip-compressed' in r.headers['content-type'] or 'application/zip' in r.headers['content-type']:
+                elif result == 'cancelled':
+                    return False, 'Process cancelled by the server.'
+                elif result == 'done':
                     return True, 'Generated valid indexer file.'
                 else:
-                    return False, 'Error when trying to get content of indexer: %s.' % (r.headers['content-type'])
+                    return False, 'Undefined state on Server for the current task.'
             else:
-                return False, 'Could not generate a valid indexer, code: %s.\nCheck Correct-category name.' % (r.status_code)
+                return False, 'Could not generate a valid indexer, code: %s.' % (r.status_code)
 
 def job():
     global isRunning
@@ -74,4 +76,4 @@ schedule.every(10).seconds.do(job)
 
 while 1:
     schedule.run_pending()
-    time.sleep(10)
+    time.sleep(1)

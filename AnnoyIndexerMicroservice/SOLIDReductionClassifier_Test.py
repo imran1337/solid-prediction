@@ -3,15 +3,57 @@ Test Data
 '''
 
 
-import time
 import os
-import zipfile
 import requests
+import time
+from tqdm import tqdm
+from urllib.parse import unquote
+import cgi
 
 # URL for getting the annoy indexer from
 SERVER_URI = 'http://127.0.0.1:5000'
 UPLOAD_SERVER_URI = 'http://upload-files-ms.eba-rvniqqiy.eu-central-1.elasticbeanstalk.com/'
 FM_SERVER_URI = 'http://slim-feature-map-ms.eba-pibymigp.eu-central-1.elasticbeanstalk.com/'
+
+def download_file_from_signed_url(signed_url, destination_dir):
+    """Download a file from a signed URL with a progress bar."""
+    with requests.get(signed_url, stream=True) as r:
+        r.raise_for_status()
+
+        # Extract the filename from Content-Disposition header
+        content_disposition = r.headers.get('content-disposition')
+        if content_disposition:
+            _, params = cgi.parse_header(content_disposition)
+            suggested_filename = params.get('filename', None)
+            if suggested_filename:
+                suggested_filename = unquote(suggested_filename)
+            else:
+                suggested_filename = 'package.zip'
+        else:
+            suggested_filename = 'package.zip'
+
+        # Ensure the destination directory exists
+        os.makedirs(destination_dir, exist_ok=True)
+
+        # Determine the full destination path
+        destination_path = os.path.join(destination_dir, suggested_filename)
+
+        total_size = int(r.headers.get('content-length', 0))
+        block_size = 1024
+
+        with open(destination_path, 'wb') as f, tqdm(
+            desc="Downloading",
+            total=total_size,
+            unit="B",
+            unit_scale=True,
+            unit_divisor=1024,
+        ) as pbar:
+            for chunk in r.iter_content(chunk_size=block_size):
+                f.write(chunk)
+                pbar.update(len(chunk))
+                time.sleep(0.1)
+
+        return destination_path
 
 isRunning = False
 
@@ -33,7 +75,6 @@ def generateIndexer(indexerPath, vendor, category):
     strTaskId = None
     try:
         with requests.get(strReq, stream=True) as r:
-            blockSize = 1024
             if r.status_code == 200:
                 strTaskId = r.json()['id']
     except requests.exceptions.ConnectionError:
@@ -46,42 +87,24 @@ def generateIndexer(indexerPath, vendor, category):
     while result:
         strReq = SERVER_URI + '/get-annoy-indexer/' + strTaskId
         with requests.get(strReq, stream=True) as r:
-            blockSize = 1024
-            #self.updateProgress.emit(50)
             if r.status_code == 200:
-                if 'text/html' in r.headers['content-type']:
-                    print(r.json())
-                    print(r.json()['result'])
-                    if r.json()['result'] != 'running' and r.json()['result'] != 'not started yet':
-                        return False, 'Connection Error: Undefined state on Server for current task.'
+                result = r.json()['result']
+
+                if result == 'running' or result == 'not started yet':
                     time.sleep(1)
-                elif 'application/x-zip-compressed' in r.headers['content-type'] or\
-                    'application/zip' in r.headers['content-type']:
-                    print(f'r.headers: {r.headers}')
-                    total_size = int(r.headers.get('content-length', 0))
-                    zipFile = os.path.join(indexerPath, 'ModelFile.zip')
-                    if isRunning == False:
-                        return False, 'Process aborted by user.'
-                    with open(zipFile, 'wb') as f:
-                        for data in r.iter_content(blockSize):
-                            wrote = wrote + len(data)
-                            f.write(data)
-                            if isRunning == False:
-                                return False, 'Process aborted by user.'
-                            #self.updateProgress.emit(float(wrote) * 100 / float(total_size))
-
-                    with zipfile.ZipFile(zipFile, 'r') as zip_ref:
-                        zip_ref.extractall(os.path.join(indexerPath, vendor))
-                    os.remove(zipFile)
-
-                    strReq = SERVER_URI + '/remove-annoy-indexer/' + strTaskId
-                    requests.get(strReq, stream=True)
+                elif result == 'cancelled':
+                    return False, 'Process cancelled by the server.'
+                elif result == 'done':
+                    fileUrl = r.json()['fileUrl']
+                    # Download and save the file
+                    download_path = os.path.join(indexerPath, vendor, category)
+                    download_file_from_signed_url(fileUrl, download_path)
 
                     return True, 'Generated valid indexer file.'
                 else:
-                    return False, 'Error when trying to get content of indexer: %s.' % (r.headers['content-type'])
+                    return False, 'Undefined state on Server for the current task.'
             else:
-                return False, 'Could not generate a valid indexer, code: %s.\nCheck Correct-category name.' % (r.status_code)
+                return False, 'Could not generate a valid indexer, code: %s.' % (r.status_code)
 
     return False, 'Could not start generating indexer.'
 

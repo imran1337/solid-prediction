@@ -368,7 +368,7 @@ def getAnnoyIndexer(id):
         object_name = f'{id}.zip'
         signed_url = generate_signed_url(object_name)
         if signed_url is not None:
-            return redirect(signed_url)
+            return json.dumps({'id': id, 'result': 'done', 'fileUrl': signed_url})
         else:
             # Return a 404 response for file not found
             abort(404, 'File not found')
@@ -388,7 +388,7 @@ def getAnnoyIndexerJob(id):
         dictUsers[id] = dictUsersForJobs[id]
         gcs_zip_url = dictUsersForJobs[id].result()
         if gcs_zip_url is not None:
-            return redirect(gcs_zip_url)
+            return json.dumps({'id': id, 'result': 'done', 'fileUrl': gcs_zip_url})
         else:
             # Return a 404 response for file not found
             abort(404, 'File not found')
@@ -425,8 +425,6 @@ def removeAnnoyIndexer(id):
         mongoReplace(id, "Failed to remove annoy indexer.")
         print(error)
         return json.dumps({'id': id, 'result': 'error'})
-
-
 
 
 @application.route("/find-matching-part", methods=['POST'])
