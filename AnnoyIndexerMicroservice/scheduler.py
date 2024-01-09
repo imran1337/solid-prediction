@@ -3,6 +3,15 @@ import time
 import requests
 import os
 
+environment = 'dev'
+
+if environment == 'dev':
+    try:
+        import dotenv
+        dotenv.load_dotenv()
+    except ImportError:
+        pass
+
 # URL for getting the annoy indexer from
 SERVER_URI = 'http://127.0.0.1:5000'
 
@@ -78,6 +87,8 @@ def job():
 
 # Fetch the schedule interval from environment variables (default to 12 hours / 43200 seconds)
 schedule_interval = int(os.getenv("SCHEDULE_INTERVAL_SECONDS", 43200))
+
+print(f'===schedule_interval=== {schedule_interval}')
 
 # Schedule the job with the specified interval
 schedule.every(schedule_interval).seconds.do(job)
