@@ -155,6 +155,22 @@ def downloadPackage(args):
 
     return [results, featureLen, subTaskId]
 
+def is_zip_file_exists(object_name:str):
+    blob = gcs_bucket.blob(object_name)
+    return blob.exists()
+
+def get_remote_zip_file_size(object_name: str):
+    try:
+        size_in_bytes = gcs_bucket.get_blob(object_name).size
+        return size_in_bytes
+    except Exception as e:
+        print(f"Error getting size for GCS object {object_name}: {e}")
+        return None
+
+def upload_zip_to_gcs(object_name, zip_data):
+    blob = gcs_bucket.blob(object_name)
+    blob.upload_from_file(zip_data, content_type='application/zip')
+
 def generate_signed_url(object_name: str):
     try:
         blob = gcs_bucket.blob(object_name)
@@ -256,6 +272,7 @@ def generateAnnoyIndexerTask(currentPath, vendor, category):
     # Zip files
     print('Zip stuff')
     
+    # Create the zip file in memory
     archive = io.BytesIO()
     with ZipFile(archive, 'w') as zip_archive:
         for file_path in Path(downloadTotalPath).iterdir():
@@ -265,16 +282,36 @@ def generateAnnoyIndexerTask(currentPath, vendor, category):
                 zip_archive.writestr(zip_file, file.read())
 
     archive.seek(0)
+                    
+    # Check if the zip file already exists in GCS
+    zip_file_name = f"{vendor}_{category}.zip"
+    if is_zip_file_exists(zip_file_name):
+        # If it exists, check the size
+        remote_zip_size = get_remote_zip_file_size(zip_file_name)
 
-    object_name = f"{vendor}_{category}.zip"
+        if remote_zip_size is not None:
+            # If the size is available, compare with in-memory size
+            in_memory_zip_size = archive.getbuffer().nbytes
 
-    blob = storage.Blob(object_name, gcs_bucket)
-    blob.upload_from_file(archive, content_type='application/zip')
+            if remote_zip_size == in_memory_zip_size:
+                # Skip upload if sizes match
+                print("Zip file already exists in GCS with the same size. Skipping upload.")
+            else:
+                # Upload the new zip file if sizes don't match
+                upload_zip_to_gcs(zip_file_name, archive)
+        else:
+            # Handle the case where size information is not available
+            print("Warning: Size information for remote zip file is not available.")
+            # Proceed with the upload as a precaution
+            upload_zip_to_gcs(zip_file_name, archive)
+    else:
+        # Upload the zip file if it doesn't exist in GCS
+        upload_zip_to_gcs(zip_file_name, archive)
 
     # Cleanup files
     shutil.rmtree(downloadTotalPath)
 
-    signed_url = generate_signed_url(object_name)
+    signed_url = generate_signed_url(zip_file_name)
 
     return signed_url
 
