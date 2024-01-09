@@ -401,32 +401,6 @@ def index():
     return 'Running'
 
 
-@application.route("/remove-annoy-indexer/<id>", methods=['GET'])
-def removeAnnoyIndexer(id):
-    try:
-        if id in dictUsers and dictUsers[id].done():
-            # Get the GCS object name based on the id
-            object_name = f"{id}.zip"
-
-            # Check if the GCS object exists before trying to delete it
-            blob = gcs_bucket.blob(object_name)
-            if blob.exists():
-                # Delete the object from the GCS bucket
-                blob.delete()
-
-            # Remove the entry from the dictionary
-            del dictUsers[id]
-
-            return json.dumps({'id': id, 'result': 'removed'})
-        else:
-            # Handle the case where id is not found in dictUsers or dictUsers[id] is not done
-            return json.dumps({'id': id, 'result': 'id not found or not done'})
-    except Exception as error:
-        mongoReplace(id, "Failed to remove annoy indexer.")
-        print(error)
-        return json.dumps({'id': id, 'result': 'error'})
-
-
 @application.route("/find-matching-part", methods=['POST'])
 def findMatchingPart():
     content = request.json
