@@ -12,6 +12,11 @@ FM_SERVER_URI = 'http://slim-feature-map-ms.eba-pibymigp.eu-central-1.elasticbea
 
 def download_file_from_signed_url(signed_url, destination_dir):
     """Download a file from a signed URL with a progress bar."""
+
+    # Create destination directory if it doesn't exist
+    if not os.path.exists(destination_dir):
+        os.makedirs(destination_dir)
+
     with requests.get(signed_url, stream=True) as r:
         try:
             r.raise_for_status()
