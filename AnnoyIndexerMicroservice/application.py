@@ -20,9 +20,9 @@ from google.cloud import storage
 from zipfile import ZipFile, ZipInfo
 from google.api_core.exceptions import NotFound
 
-environment = 'dev'
+environment = os.getenv('FLASK_ENV', 'development')
 
-if environment == 'dev':
+if environment == 'development':
     try:
         import dotenv
         dotenv.load_dotenv()
@@ -232,7 +232,7 @@ def generateAnnoyIndexerTask(currentPath, vendor, category):
     with ThreadPoolExecutor() as executor:
         args = []
         
-        if environment == 'dev':
+        if environment == 'development':
             for fileChunkIdx in fileTuples[:1]:
                 args.append([bucketName, featureFiles[fileChunkIdx[0]: fileChunkIdx[1]], subTaskId])
                 subTaskId += 1
