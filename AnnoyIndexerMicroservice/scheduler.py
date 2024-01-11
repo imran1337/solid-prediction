@@ -2,18 +2,12 @@ import schedule
 import time
 import requests
 import os
+import dotenv
 
-environment = os.getenv('FLASK_ENV', 'development')
-
-if environment == 'development':
-    try:
-        import dotenv
-        dotenv.load_dotenv()
-    except ImportError:
-        pass
+dotenv.load_dotenv()
 
 # URL for getting the annoy indexer from
-SERVER_URI = 'http://127.0.0.1:5000'
+SERVER_URI = os.getenv('SERVER_URL', 'http://127.0.0.1:5000')
 
 class Vendor:
     def __init__(self, vendor: str, category: str):
@@ -34,18 +28,25 @@ def generateIndexer(vendor, category):
     return: True, '' on success, False, Error description otherwise
     '''
     strReq = SERVER_URI + '/job/annoy-indexer-setup/' + vendor + '/' + category
+    max_retries = 5
+    retry_count = 0
 
-    try:
-        with requests.get(strReq, stream=True) as r:
-            r.raise_for_status()
-            if r.status_code == 200:
-                strTaskId = r.json().get('id')
-    except requests.exceptions.ConnectionError as e:
-        return False, f'Connection Error: {e}'
-    except requests.exceptions.RequestException as e:
-        return False, f'Request Error: {e}'
-    except ValueError as e:
-        return False, f'Error decoding JSON: {e}'
+    while retry_count < max_retries:
+        try:
+            with requests.get(strReq, stream=True) as r:
+                r.raise_for_status()
+                if r.status_code == 200:
+                    strTaskId = r.json().get('id')
+                    break  # Break out of the loop if successful
+        except requests.exceptions.ConnectionError as e:
+            retry_count += 1
+            if retry_count == max_retries:
+                return False, f'Connection Error: {e} (Max retries reached)'
+            time.sleep(1)
+        except requests.exceptions.RequestException as e:
+            return False, f'Request Error: {e}'
+        except ValueError as e:
+            return False, f'Error decoding JSON: {e}'
 
     if strTaskId is None:
         return False, 'Connection Error: Could not get a valid Task Id from Server.'
@@ -86,7 +87,9 @@ def job():
         isRunning = False
 
 # Fetch the schedule interval from environment variables (default to 12 hours / 43200 seconds)
-schedule_interval = int(os.getenv("SCHEDULE_INTERVAL_SECONDS", 43200))
+schedule_interval = int(os.getenv("SCHEDULE_INTERVAL_SECONDS", 10))
+
+print(f'===SCHEDULE_INTERVAL_SECONDS=== {schedule_interval}')
 
 # Schedule the job with the specified interval
 schedule.every(schedule_interval).seconds.do(job)

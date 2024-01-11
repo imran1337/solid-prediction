@@ -19,15 +19,11 @@ from datetime import datetime, timedelta
 from google.cloud import storage
 from zipfile import ZipFile, ZipInfo
 from google.api_core.exceptions import NotFound
+import dotenv
+
+dotenv.load_dotenv()
 
 environment = os.getenv('FLASK_ENV', 'development')
-
-if environment == 'development':
-    try:
-        import dotenv
-        dotenv.load_dotenv()
-    except ImportError:
-        pass
 
 # Set up Google Cloud Storage client
 gcs_client = storage.Client()

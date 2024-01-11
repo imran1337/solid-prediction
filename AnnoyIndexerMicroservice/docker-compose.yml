@@ -1,0 +1,32 @@
+version: '3'
+
+services:
+  web:
+    container_name: annoy_script
+    build: .
+    ports:
+      - "5000:5000"
+    environment:
+      - FLASK_APP=application.py
+      - FLASK_ENV=production
+      - GOOGLE_APPLICATION_CREDENTIALS=./solidmetaprediction-a9d846238df8.json
+    command: gunicorn -c gunicorn_config.py application:application
+    networks:
+      - app_network
+
+  scheduler:
+    container_name: scheduler_container
+    build: 
+      context: .
+      dockerfile: Dockerfile_scheduler
+    environment:
+      - SERVER_URL=http://web:5000
+    command: python scheduler.py
+    depends_on:
+      - web
+    networks:
+      - app_network
+
+networks:
+  app_network:
+    driver: bridge
