@@ -87,9 +87,9 @@ def job():
         isRunning = False
 
 # Fetch the schedule interval from environment variables (default to 12 hours / 43200 seconds)
-schedule_interval = int(os.getenv("SCHEDULE_INTERVAL_SECONDS", 10))
+schedule_interval = int(os.getenv("SCHEDULE_INTERVAL_SECONDS", 43200))
 
-print(f'===SCHEDULE_INTERVAL_SECONDS=== {schedule_interval}')
+# print(f'===SCHEDULE_INTERVAL_SECONDS=== {schedule_interval}')
 
 # Schedule the job with the specified interval
 schedule.every(schedule_interval).seconds.do(job)

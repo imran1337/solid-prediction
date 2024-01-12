@@ -1,17 +1,15 @@
-# In this directory, run the following command to build this builder.
-# $ gcloud builds submit . --config=cloudbuild.yaml
-
+# Run gcloud builds submit --region=us-west2 --config cloudbuild.yaml
 steps:
-  # Build and push Docker images
-  - name: 'gcr.io/cloud-builders/docker'
-    args:
-      - 'compose'
-      - 'build'
-      - '--parallel'
-  
-  # Deploy using Docker Compose
-  - name: 'docker/compose:1.29.2'
-    args: ['up', '-d']
+- name: 'gcr.io/cloud-builders/docker'
+  script: |
+    docker build -t us-west2-docker.pkg.dev/solidmetaprediction/annoy-scripts-docker-repo/annoy_script:tag1 .
+  automapSubstitutions: true
+
+- name: 'gcr.io/cloud-builders/docker'
+  script: |
+    docker build -t us-west2-docker.pkg.dev/solidmetaprediction/annoy-scripts-docker-repo/annoy_scheduler:tag1 -f Dockerfile_scheduler .
+  automapSubstitutions: true
 
 images:
-  - 'gcr.io/$solidmetaprediction/annoy_script@latest'
+- 'us-west2-docker.pkg.dev/solidmetaprediction/annoy-scripts-docker-repo/annoy_script:tag1'
+- 'us-west2-docker.pkg.dev/solidmetaprediction/annoy-scripts-docker-repo/annoy_scheduler:tag1'
