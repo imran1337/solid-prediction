@@ -39,6 +39,15 @@ application = Flask(__name__)
 # Thread executor
 thread_executor = ThreadPoolExecutor(max_workers=2)
 
+class Vendor:
+    def __init__(self, vendor: str, category: str):
+        self.vendor = vendor
+        self.category = category
+
+vendor_information = [
+    Vendor("Volkswagen", "LOD_1"),
+]
+
 # MongoDB connection
 def connect_mongo_questions_db():
     mongo_uri = os.getenv("MONGODB_URI")
@@ -450,17 +459,21 @@ def getAnnoyIndexerJob(id):
 def index():
     return 'Running'
 
-@application.route("/process/<vendor>/<cat>", methods=['GET'])
-def process(vendor, cat):
-    print(f"Start task to generate indexer for {vendor} - {cat}")
-    try:
-        generateIndexerWorker(vendor, cat)
-        # thread_executor.submit(generateIndexerWorker, vendor, cat)
-        print('Task started in another thread')
-        return json.dumps({'status': True, 'msg': f"Indexer generation has been executed for {vendor} - {cat} and is in progress."})
-    except Exception as error:
-        print(error)
-        return json.dumps({'status': False, 'msg': error})
+@application.route("/process", methods=['GET'])
+def process():
+    for vendor_info in vendor_information:
+        vendor = vendor_info.vendor
+        category = vendor_info.category
+        print(f"Start task to generate indexer for {vendor} - {category}")
+        try:
+            generateIndexerWorker(vendor, category)
+            # thread_executor.submit(generateIndexerWorker, vendor, category)
+            print('Task started in another thread')
+        except Exception as error:
+            print(error)
+            return json.dumps({'status': False, 'msg': error})
+        
+    return json.dumps({'status': True, 'msg': f"Indexer generation has been executed for {len(vendor_information)} vendors and is in progress."})
 
 
 @application.route("/find-matching-part", methods=['POST'])
