@@ -20,6 +20,7 @@ from google.cloud import storage
 from zipfile import ZipFile, ZipInfo
 from google.api_core.exceptions import NotFound
 import dotenv
+import time;
 
 dotenv.load_dotenv()
 
@@ -332,6 +333,53 @@ def encryptMessage(key, msg):
     treatment = handler.encrypt(encoded_msg)
     return str(treatment, 'utf-8')
 
+def generateIndexerWorker(vendor, category):
+    '''
+    Download the annoy indexer for the given vendor and the given category
+    :param vendor: Vendor
+    :param category: Category which Indexer to get
+    return: True, '' on success, False, Error description otherwise
+    '''
+    print('generateIndexerWorker started for', vendor, category)
+    try:
+        data = annoyIndexerJob(vendor, category)
+        strTaskId = json.loads(data).get('id')
+        print('Task ID', strTaskId)
+    except ValueError as e:
+        msg = f"Error decoding JSON: {e}"
+        print(msg)
+        return False, msg
+
+    if strTaskId is None:
+        msg = 'Connection Error: Could not get a valid Task Id.'
+        print(msg)
+        return False, msg
+
+    while True:
+        try:
+            data = getAnnoyIndexerJob(strTaskId)
+            result = json.loads(data).get('result')
+            print('result', result)
+        except ValueError as e:
+            msg = f"Error decoding JSON: {e}"
+            print(msg)
+            return False, msg
+
+        if result == 'running' or result == 'not started yet':
+            time.sleep(1)
+        elif result == 'cancelled':
+            msg = 'Process cancelled by the server.'
+            print(msg)
+            return False, msg
+        elif result == 'done':
+            msg = 'Generated valid indexer file.'
+            print(msg)
+            return True, msg
+        else:
+            msg = 'Undefined state on Server for the current task.'
+            print(msg)
+            return False, msg
+
 
 @application.route("/annoy-indexer-setup/<vendor>/<cat>", methods=['GET'])
 def annoyIndexer(vendor, cat):
@@ -401,6 +449,18 @@ def getAnnoyIndexerJob(id):
 @application.route("/", methods=['GET'])
 def index():
     return 'Running'
+
+@application.route("/process/<vendor>/<cat>", methods=['GET'])
+def process(vendor, cat):
+    print(f"Start task to generate indexer for {vendor} - {cat}")
+    try:
+        generateIndexerWorker(vendor, cat)
+        # thread_executor.submit(generateIndexerWorker, vendor, cat)
+        print('Task started in another thread')
+        return json.dumps({'status': True, 'msg': f"Indexer generation has been executed for {vendor} - {cat} and is in progress."})
+    except Exception as error:
+        print(error)
+        return json.dumps({'status': False, 'msg': error})
 
 
 @application.route("/find-matching-part", methods=['POST'])
