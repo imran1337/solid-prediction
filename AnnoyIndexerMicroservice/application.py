@@ -1,4 +1,4 @@
-from flask import Flask, request, current_app, redirect, abort
+from flask import Flask, request, current_app, abort, jsonify
 from pathlib import Path
 from cryptography.fernet import Fernet as F
 import boto3
@@ -20,7 +20,12 @@ from google.cloud import storage
 from zipfile import ZipFile, ZipInfo
 from google.api_core.exceptions import NotFound
 import dotenv
-import time;
+import time
+import threading
+from threading import Semaphore
+
+
+
 
 dotenv.load_dotenv()
 
@@ -36,8 +41,10 @@ gcs_bucket = gcs_client.bucket(gcs_bucket_name)
 # Flask application
 application = Flask(__name__)
 
+
 # Thread executor
 thread_executor = ThreadPoolExecutor(max_workers=2)
+
 
 class Vendor:
     def __init__(self, vendor: str, category: str):
@@ -46,6 +53,15 @@ class Vendor:
 
 vendor_information = [
     Vendor("Volkswagen", "LOD_1"),
+    Vendor("Volkswagen", "LOD_2"),
+    Vendor("Volkswagen", "LOD_3"),
+    Vendor("Volkswagen", "LOD_4"),
+    Vendor("Volkswagen", "LOD_5"),
+    Vendor("Volkswagen", "LOD_6"),
+    Vendor("Volkswagen", "LOD_7"),
+    Vendor("Volkswagen", "LOD_8"),
+    Vendor("Volkswagen", "LOD_9"),
+    Vendor("Volkswagen", "LOD_10"),
 ]
 
 # MongoDB connection
@@ -325,6 +341,11 @@ def generateAnnoyIndexerTask(currentPath, vendor, category):
 
     signed_url = generate_signed_url(zip_file_name)
 
+    identifier = f"{vendor}_{category}"
+
+    dictUsers[identifier] = thread_executor.submit(
+                signed_url, identifier)
+
     return signed_url
 
 
@@ -459,23 +480,74 @@ def getAnnoyIndexerJob(id):
 def index():
     return 'Running'
 
+# Global variable to track whether the indexing process is running
+indexing_in_progress = False
+
+# Lock for synchronizing access to the global variable
+indexing_lock = threading.Lock()
+
+# Semaphore for synchronization
+semaphore = Semaphore()
+
 @application.route("/process", methods=['GET'])
 def process():
-    for vendor_info in vendor_information:
-        vendor = vendor_info.vendor
-        category = vendor_info.category
-        print(f"Start task to generate indexer for {vendor} - {category}")
-        try:
-            generateIndexerWorker(vendor, category)
-            # thread_executor.submit(generateIndexerWorker, vendor, category)
-            print('Task started in another thread')
-        except Exception as error:
-            print(error)
-            error_msg = str(error)
-            return json.dumps({'status': False, 'msg': error_msg})
+    global indexing_in_progress
 
-        
-    return json.dumps({'status': True, 'msg': f"Indexer generation has been executed for {len(vendor_information)} vendors and is in progress."})
+    application.logger.info("Initiating indexing process...")
+
+    # Check if the indexing process is already in progress
+    with indexing_lock:
+        if indexing_in_progress:
+            return jsonify({'status': False, 'msg': 'Indexing process is already in progress.'})
+
+        # Start the background task using a separate thread
+        threading.Thread(target=start_indexing_process).start()
+
+    return jsonify({'status': True, 'msg': 'Indexing process has been initiated.'})
+
+def start_indexing_process():
+    global indexing_in_progress
+
+    def _annoyIndexerJob(vendor, cat):
+        with application.app_context():
+            id = str(vendor + '_' + cat)
+            generateAnnoyIndexerTask(current_app.root_path, vendor, cat)
+            # Init MongoDB
+            session = _checkDBSession(mongo_client)
+            if not session:
+                mongoReplace(id, 'Error getting the DB for Annoy IDX')
+            return json.dumps({'id': id})
+
+    try:
+        with indexing_lock:
+            indexing_in_progress = True
+
+        # Start the indexing process for each vendor_info sequentially
+        for vendor_info in vendor_information:
+            vendor = vendor_info.vendor
+            category = vendor_info.category
+            print(f'Start task to generate indexer for {vendor} - {category}')
+
+            # Acquire the semaphore before starting the Annoy indexer task
+            semaphore.acquire()
+            
+            result = _annoyIndexerJob(vendor, category)
+
+            print(f'===result=== {result}')
+
+            if result:
+                print(f'Task for {vendor} - {category} completed successfully')
+            else:
+                print(f'Task for {vendor} - {category} failed')
+
+            # Release the semaphore after completing the Annoy indexer task
+            semaphore.release()
+
+    except Exception as error:
+        print(f'Error in start_indexing_process: {error}')
+    finally:
+        with indexing_lock:
+            indexing_in_progress = False
 
 
 @application.route("/find-matching-part", methods=['POST'])
