@@ -5,7 +5,7 @@ services:
     container_name: annoy_script
     build: .
     ports:
-      - "5000:5000"
+      - "8080:8080"
     environment:
       - FLASK_APP=application.py
       - FLASK_ENV=production
@@ -20,7 +20,7 @@ services:
       context: .
       dockerfile: Dockerfile_scheduler
     environment:
-      - SERVER_URL=http://web:5000
+      - SERVER_URL=http://web:8080
     command: python scheduler.py
     depends_on:
       - web

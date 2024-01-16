@@ -3,8 +3,6 @@ FROM python:3.8-slim
 RUN apt-get update && \
     apt-get install -y gcc g++ make
 
-RUN DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends apt-utils
-
 WORKDIR /app
 
 COPY . /app
