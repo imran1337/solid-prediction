@@ -471,7 +471,9 @@ def process():
             print('Task started in another thread')
         except Exception as error:
             print(error)
-            return json.dumps({'status': False, 'msg': error})
+            error_msg = str(error)
+            return json.dumps({'status': False, 'msg': error_msg})
+
         
     return json.dumps({'status': True, 'msg': f"Indexer generation has been executed for {len(vendor_information)} vendors and is in progress."})
 
