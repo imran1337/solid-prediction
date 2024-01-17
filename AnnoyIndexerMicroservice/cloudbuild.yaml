@@ -5,11 +5,5 @@ steps:
     docker build -t us-west2-docker.pkg.dev/solidmetaprediction/annoy-scripts-docker-repo/annoy_script:tag1 .
   automapSubstitutions: true
 
-- name: 'gcr.io/cloud-builders/docker'
-  script: |
-    docker build -t us-west2-docker.pkg.dev/solidmetaprediction/annoy-scripts-docker-repo/annoy_scheduler:tag1 -f Dockerfile_scheduler .
-  automapSubstitutions: true
-
 images:
 - 'us-west2-docker.pkg.dev/solidmetaprediction/annoy-scripts-docker-repo/annoy_script:tag1'
-- 'us-west2-docker.pkg.dev/solidmetaprediction/annoy-scripts-docker-repo/annoy_scheduler:tag1'
