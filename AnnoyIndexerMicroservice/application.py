@@ -24,9 +24,6 @@ import time
 import threading
 from threading import Semaphore
 
-
-
-
 dotenv.load_dotenv()
 
 environment = os.getenv('FLASK_ENV', 'development')
@@ -100,7 +97,7 @@ def init_default_value_for_dict_users():
 
 # Global variables
 dictUsers = {}
-dictUsersForJobs = {}
+
 mongo_client = connect_mongo_questions_db()
 
 # Mongo Global vars
@@ -424,18 +421,6 @@ def annoyIndexer(vendor, cat):
     return json.dumps({'id': id})
 
 
-@application.route("/job/annoy-indexer-setup/<vendor>/<cat>", methods=['GET'])
-def annoyIndexerJob(vendor, cat):
-    id = str(vendor + '_' + cat)
-    dictUsersForJobs[id] = thread_executor.submit(
-        generateAnnoyIndexerTask, current_app.root_path, vendor, cat)
-    # Init MongoDB
-    session = _checkDBSession(mongo_client)
-    if not session:
-        mongoReplace(id, 'Error getting the DB for Annoy IDX')
-    return json.dumps({'id': id})
-
-
 @application.route("/get-annoy-indexer/<id>", methods=['GET'])
 def getAnnoyIndexer(id):
     if id not in dictUsers:
@@ -449,26 +434,6 @@ def getAnnoyIndexer(id):
         signed_url = generate_signed_url(object_name)
         if signed_url is not None:
             return json.dumps({'id': id, 'result': 'done', 'fileUrl': signed_url})
-        else:
-            # Return a 404 response for file not found
-            abort(404, 'File not found')
-    else:
-        return json.dumps({'id': id, 'result': 'not started yet'})
-
-@application.route("/job/get-annoy-indexer/<id>", methods=['GET'])
-def getAnnoyIndexerJob(id):
-    if id not in dictUsersForJobs:
-        return json.dumps({'id': id, 'result': 'id unknown'})
-    elif dictUsersForJobs[id].running():
-        return json.dumps({'id': id, 'result': 'running'})
-    elif dictUsersForJobs[id].cancelled():
-        return json.dumps({'id': id, 'result': 'cancelled'})
-    elif dictUsersForJobs[id].done():
-        # Update dictUsers when job is completed
-        dictUsers[id] = dictUsersForJobs[id]
-        gcs_zip_url = dictUsersForJobs[id].result()
-        if gcs_zip_url is not None:
-            return json.dumps({'id': id, 'result': 'done', 'fileUrl': gcs_zip_url})
         else:
             # Return a 404 response for file not found
             abort(404, 'File not found')
@@ -505,18 +470,18 @@ def process():
 
     return jsonify({'status': True, 'msg': 'Indexing process has been initiated.'})
 
+def annoyIndexerJob(vendor, cat):
+    with application.app_context():
+        id = str(vendor + '_' + cat)
+        generateAnnoyIndexerTask(current_app.root_path, vendor, cat)
+        # Init MongoDB
+        session = _checkDBSession(mongo_client)
+        if not session:
+            mongoReplace(id, 'Error getting the DB for Annoy IDX')
+        return json.dumps({'id': id})
+
 def start_indexing_process():
     global indexing_in_progress
-
-    def _annoyIndexerJob(vendor, cat):
-        with application.app_context():
-            id = str(vendor + '_' + cat)
-            generateAnnoyIndexerTask(current_app.root_path, vendor, cat)
-            # Init MongoDB
-            session = _checkDBSession(mongo_client)
-            if not session:
-                mongoReplace(id, 'Error getting the DB for Annoy IDX')
-            return json.dumps({'id': id})
 
     try:
         with indexing_lock:
@@ -531,9 +496,7 @@ def start_indexing_process():
             # Acquire the semaphore before starting the Annoy indexer task
             semaphore.acquire()
             
-            result = _annoyIndexerJob(vendor, category)
-
-            print(f'===result=== {result}')
+            result = annoyIndexerJob(vendor, category)
 
             if result:
                 print(f'Task for {vendor} - {category} completed successfully')
