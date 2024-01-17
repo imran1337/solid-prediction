@@ -458,8 +458,6 @@ semaphore = Semaphore()
 def process():
     global indexing_in_progress
 
-    application.logger.info("Initiating indexing process...")
-
     # Check if the indexing process is already in progress
     with indexing_lock:
         if indexing_in_progress:
@@ -467,6 +465,8 @@ def process():
 
         # Start the background task using a separate thread
         threading.Thread(target=start_indexing_process).start()
+
+        print("Initiating indexing process...")
 
     return jsonify({'status': True, 'msg': 'Indexing process has been initiated.'})
 
