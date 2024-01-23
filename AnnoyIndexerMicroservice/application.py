@@ -49,16 +49,7 @@ class Vendor:
         self.category = category
 
 vendor_information = [
-    Vendor("Volkswagen", "LOD_1"),
-    Vendor("Volkswagen", "LOD_2"),
-    Vendor("Volkswagen", "LOD_3"),
-    Vendor("Volkswagen", "LOD_4"),
-    Vendor("Volkswagen", "LOD_5"),
-    Vendor("Volkswagen", "LOD_6"),
-    Vendor("Volkswagen", "LOD_7"),
-    Vendor("Volkswagen", "LOD_8"),
-    Vendor("Volkswagen", "LOD_9"),
-    Vendor("Volkswagen", "LOD_10"),
+    Vendor("Touareg_PA", "LOD_1"),
 ]
 
 # MongoDB connection
