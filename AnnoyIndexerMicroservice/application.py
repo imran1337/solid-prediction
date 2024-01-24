@@ -491,21 +491,28 @@ def start_indexing_process():
             # Acquire the semaphore before starting the Annoy indexer task
             semaphore.acquire()
             
-            result = annoyIndexerJob(vendor, category)
+            try:
+                result = annoyIndexerJob(vendor, category)
 
-            if result:
-                print(f'Task for {vendor} - {category} completed successfully')
-            else:
-                print(f'Task for {vendor} - {category} failed')
+                if result:
+                    print(f'Task for {vendor} - {category} completed successfully')
+                else:
+                    print(f'Task for {vendor} - {category} failed')
 
-            # Release the semaphore after completing the Annoy indexer task
-            semaphore.release()
+            except Exception as error:
+                print(f'Error in annoyIndexerJob: {error}')
+
+            finally:
+                # Release the semaphore after completing the Annoy indexer task or in case of an exception
+                semaphore.release()
 
     except Exception as error:
         print(f'Error in start_indexing_process: {error}')
+
     finally:
         with indexing_lock:
             indexing_in_progress = False
+
 
 
 @application.route("/find-matching-part", methods=['POST'])
