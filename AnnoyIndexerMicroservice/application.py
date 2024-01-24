@@ -178,8 +178,12 @@ def get_remote_zip_file_size(object_name: str):
         return None
 
 def upload_zip_to_gcs(object_name, zip_data):
-    blob = gcs_bucket.blob(object_name)
-    blob.upload_from_file(zip_data, content_type='application/zip')
+    try:
+        blob = gcs_bucket.blob(object_name)
+        blob.upload_from_file(zip_data, content_type='application/zip')
+    except Exception as e:
+        print(f"Error in upload process: {e}")
+
 
 def generate_signed_url(object_name: str):
     try:
