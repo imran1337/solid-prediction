@@ -468,12 +468,18 @@ def process():
 def annoyIndexerJob(vendor, cat):
     with application.app_context():
         id = str(vendor + '_' + cat)
-        generateAnnoyIndexerTask(current_app.root_path, vendor, cat)
-        # Init MongoDB
-        session = _checkDBSession(mongo_client)
-        if not session:
-            mongoReplace(id, 'Error getting the DB for Annoy IDX')
+        try:
+            generateAnnoyIndexerTask(current_app.root_path, vendor, cat)
+            # Init MongoDB
+            session = _checkDBSession(mongo_client)
+            if not session:
+                mongoReplace(id, 'Error getting the DB for Annoy IDX')
+        except Exception as e:
+            print(f"An error occurred: {str(e)}")
+            mongoReplace(id, f'An error occurred: {str(e)}')
+        
         return json.dumps({'id': id})
+
 
 def start_indexing_process():
     global indexing_in_progress
