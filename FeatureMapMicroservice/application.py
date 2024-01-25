@@ -12,6 +12,7 @@ from featureMap import Index
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 import fileOperations
+from google.cloud import storage
 
 from dotenv import load_dotenv
 load_dotenv(dotenv_path='../dot.env')
@@ -24,6 +25,13 @@ threadExecutor = ThreadPoolExecutor(1)
 dictUsers = {}
 application = Flask(__name__)
 mongoClient = connectMongoQuestionsDB()
+
+# Set up Google Cloud Storage client
+gcs_client = storage.Client()
+
+# Your Google Cloud Storage bucket name
+gcs_bucket_name = os.getenv("GOOGLE_CLOUD_BUCKET_ID")
+gcs_bucket = gcs_client.bucket(gcs_bucket_name)
 
 processing_complete = False
 
@@ -48,11 +56,12 @@ def _checkDBSession(clientDB):
     return clientDB
 
 def mongoReplace(id, errorMessage):
-    session = _checkDBSession(mongoClient)
-    if session:
-        collection = session[DB_NAME]["featureMapErrors"]
-        collection.replace_one(
-            {"id": id}, {"id": id, "error": errorMessage, "timestamp": datetime.now()})
+    # session = _checkDBSession(mongoClient)
+    # if session:
+    #     collection = session[DB_NAME]["featureMapErrors"]
+    #     collection.replace_one(
+    #         {"id": id}, {"id": id, "error": errorMessage, "timestamp": datetime.now()})
+    print(f"Found error {id} - {errorMessage}")
 
 # Mongo Global vars
 DB_NAME = "slim-prediction"
@@ -62,25 +71,50 @@ COLLECTION_NAME = "JSONInfo"#"Testing"
 def generateFeatureMapCreationTask(bucketName, id):
     '''
     Create as many threads as possible on this machine parallelizing the processing of an image into feature maps
-    :param bucketName: S3 Bucket Name
+    :param bucketName: GCS Bucket Name
     :param id: UUID coming from the Go Server
     :return:
     '''
-    fileTuples = []
+    try:
+        fileTuples = []
 
-    s3 = boto3.resource('s3')
-    bucket = s3.Bucket(bucketName)
-    lstS3Files = list(bucket.objects.filter(Prefix="img/" + id))
+        client = storage.Client()
+        bucket = client.bucket(bucketName)
 
-    count = 100
-    for idx in range(0, len(lstS3Files), count):
-        fileTuples.append((idx, min(idx + count, len(lstS3Files))))
+        print("Called")
+        
+        try:
+            lstGCSObjects = list(bucket.list_blobs(prefix="img/" + id)) 
+        except Exception as err:
+            print(f"error in lstGCSObjects process")
 
-    with ThreadPoolExecutor() as executor:
-        args = []
-        for fileChunkIdx in fileTuples:
-            args.append([bucketName, lstS3Files[fileChunkIdx[0]: fileChunkIdx[1]], id])
-        results = executor.map(generateFeatureMap, args)
+
+        count = 100
+        for idx in range(0, len(lstGCSObjects), count):
+            fileTuples.append((idx, min(idx + count, len(lstGCSObjects))))
+
+        with ThreadPoolExecutor() as executor:
+            args = []
+            for fileChunkIdx in fileTuples:
+                chunk = lstGCSObjects[fileChunkIdx[0]: fileChunkIdx[1]]
+                blob_list = [blob for blob in chunk] 
+                args.append([bucketName, blob_list, id])
+
+            results = executor.map(generateFeatureMap, args)
+
+            # Check if any errors occurred during the uploads
+            if any(result and "Error" in result for result in results):
+                # Handle errors, log, or raise an exception
+                print("Some files failed to upload. Details:")
+                for result in results:
+                    if result and "Error" in result:
+                        print(result)
+            else:
+                print("All files uploaded successfully")
+
+    except Exception as err:
+        print(f"Error in generateFeatureMapCreationTask process: {err}")
+
 
 
 def generateFeatureMap(args):
@@ -99,7 +133,14 @@ def generateFeatureMap(args):
     failed = False
     while failed == False:
         try:
-            s3Client = boto3.client('s3')
+            # s3Client = boto3.client('s3')
+            # Set up Google Cloud Storage client
+            gcs_client = storage.Client()
+
+            # Your Google Cloud Storage bucket name
+            # gcs_bucket_name = os.getenv("GOOGLE_CLOUD_BUCKET_ID")
+            # gcs_bucket = gcs_client.bucket(gcs_bucket_name)
+
             failed = True
         except Exception as error:
             mongoReplace(id, "Failed to connect to aws.")
@@ -123,7 +164,7 @@ def generateFeatureMap(args):
         fileName = obj.key.replace(
             "img/", "featuremap/").rsplit('.', 1)[0] + ".bin"
         try:
-            s3Client.upload_fileobj(io.BytesIO(  # try except here
+            gcs_client.upload_fileobj(io.BytesIO(  # try except here
                 awsImageBytesFeatures.tobytes()), bucketName, fileName)
         except Exception as error:
             mongoReplace(id, "Failed to upload feature map to aws.")
@@ -155,7 +196,8 @@ def getResult(id):
 # to updated
 def process_file(filename, additionalInfo, fileId):
     # Perform your long-running file processing task here
-    destPath = fileOperations.decrypt_file(filename, fileId)
+    # destPath = fileOperations.decrypt_file(filename, fileId)
+    destPath = fileOperations.copy_zip_file(filename, fileId)
     additionalInfo = json.loads(additionalInfo)
     additionalInfo['uuid'] = fileId
     print('-2')
@@ -171,13 +213,19 @@ def process_file(filename, additionalInfo, fileId):
             dictPresets = fileOperations.addJsonToMongo(jsonPath, additionalInfo, mongoClient, DB_NAME, COLLECTION_NAME)
             print('1')
             # Usage example
-            bucket = os.environ['S3_BUCKET']
-            session = boto3.Session()
-            s3_client = session.client("s3")
+            bucket = os.environ['GOOGLE_CLOUD_BUCKET_ID']
+            # session = boto3.Session()
+            # s3_client = session.client("s3")
+
+
+            # GCS Bucket and Blob setup
+            storage_client = storage.Client()
+            bucket = storage_client.bucket(bucket)
+
             print('2')
-            fileOperations.uploadFileType(destZipPath, 'img', bucket, s3_client, fileId)
+            fileOperations.uploadFileType(destZipPath, 'img', bucket, storage_client, fileId)
             print('3')
-            fileOperations.uploadFileType(destZipPath, 'preset', bucket, s3_client, fileId, dictPresets)
+            fileOperations.uploadFileType(destZipPath, 'preset', bucket, storage_client, fileId, dictPresets)
             print('4')
             generateFeatureMapCreationTask(bucket, fileId)
             print('5')
@@ -204,9 +252,9 @@ def upload_file():
     file.save(filePath)
 
     dictUsers[fileId] = threadExecutor.submit(process_file, filePath, data, fileId)
-    session = _checkDBSession(mongoClient)
-    if not session:
-        mongoReplace(fileId, 'Error getting the Feature Map MS DB.')
+    # session = _checkDBSession(mongoClient)
+    # if not session:
+    #     mongoReplace(fileId, 'Error getting the Feature Map MS DB.')
 
     return json.dumps({'id': fileId})
 

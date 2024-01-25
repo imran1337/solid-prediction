@@ -8,6 +8,8 @@ import hashlib
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
 import boto3
+import shutil
+from google.cloud import storage
 
 def decrypt_file(file_path, fileId):
     # Construct the command
@@ -23,6 +25,18 @@ def decrypt_file(file_path, fileId):
         return ''
 
     return os.path.join(file_path).replace('smp', 'zip')
+
+def copy_zip_file(file_path, fileId):
+    static_folder = os.path.join(os.getcwd(), 'static')
+    dest_path = os.path.join(static_folder, 'upload', fileId + '.zip')
+
+    try:
+        shutil.copy2(file_path, dest_path)
+        print('File copy completed successfully.')
+        return dest_path
+    except Exception as e:
+        print(f'File copy failed with error: {e}')
+        return ''
 
 def get_hash(filename):
     try:
@@ -127,24 +141,39 @@ def addJsonToMongo(json_file_path, additionalInfo, client, mongodb_database, mon
     print(f"Records added to MongoDB collection '{mongodb_collection}' successfully.")
     return dictPresets
 
-def uploadFileType(destZipPath, fileType, bucket, s3_client, fileId, dictPresets={}):
-    fileTuples = []
-    arrFiles = os.listdir(os.path.join(destZipPath, fileType))
+def uploadFileType(destZipPath, fileType, bucket, gcs_client, fileId, dictPresets={}):
+    try:
+        fileTuples = []
+        arrFiles = os.listdir(os.path.join(destZipPath, fileType))
 
-    count = 100
-    for idx in range(0, len(arrFiles), count):
-        fileTuples.append((idx, min(idx + count, len(arrFiles))))
+        count = 100
+        for idx in range(0, len(arrFiles), count):
+            fileTuples.append((idx, min(idx + count, len(arrFiles))))
 
-    with ThreadPoolExecutor() as executor:
-        args = []
-        for fileChunkIdx in fileTuples:
-            args.append([[os.path.join(destZipPath, fileType, obj)
-                         for obj in arrFiles[fileChunkIdx[0]: fileChunkIdx[1]]],
-                         bucket, s3_client, fileId, dictPresets])
-        results = executor.map(putInS3, args)
+        with ThreadPoolExecutor() as executor:
+            args = []
+            for fileChunkIdx in fileTuples:
+                args.append([[os.path.join(destZipPath, fileType, obj)
+                            for obj in arrFiles[fileChunkIdx[0]: fileChunkIdx[1]]],
+                            bucket, gcs_client, fileId, dictPresets])
+            results = executor.map(putInS3, args)
+
+            # Check if any errors occurred during the uploads
+            if any(result and "Error" in result for result in results):
+                # Handle errors, log, or raise an exception
+                print("Some files failed to upload. Details:")
+                for result in results:
+                    if result and "Error" in result:
+                        print(result)
+            else:
+                print("All files uploaded successfully")
+
+    except Exception as e:
+         # Handle any unexpected errors at the higher level
+        print(f"Unexpected error in uploadFileType: {e}")
 
     #for obj in os.listdir(os.path.join(destZipPath, fileType)):
-    #    location, error = putInS3(os.path.join(destZipPath, fileType, obj), bucket, s3_client, fileId, dictPresets)
+    #    location, error = putInS3(os.path.join(destZipPath, fileType, obj), bucket, gcs_client, fileId, dictPresets)
     #    if error is not None:
     #        print(f"Error uploading file: {error}")
     #    else:
@@ -153,20 +182,21 @@ def uploadFileType(destZipPath, fileType, bucket, s3_client, fileId, dictPresets
         # Testing
         #return None
 
-def doesPresetExist(s3_client, bucket, name, dictPresets):
-    response = s3_client.list_objects_v2(Bucket=bucket, Prefix="preset/")
-    content = response.get("Contents", [])
+def doesPresetExist(gcs_client, bucket, name, dictPresets):
+    blobs = gcs_client.list_blobs(bucket, prefix="preset/")
+    
     if os.path.basename(name) in dictPresets:
-        for obj in content:
-            if dictPresets[os.path.basename(name)] == obj['Key']:
+        for blob in blobs:
+            if dictPresets[os.path.basename(name)] == blob.name:
                 return True
     return False
 
+
 def putInS3(args):
-    #file_path, bucket, s3_client, uuid, dictPresets={}
+    #file_path, bucket, gcs_client, uuid, dictPresets={}
     arrFiles = list(args[0])
     bucket = args[1]
-    s3_client = args[2]
+    gcs_client = args[2]
     uuid = args[3]
     dictPresets = dict(args[4])
 
@@ -182,7 +212,7 @@ def putInS3(args):
             file_name = os.path.basename(file_path)
             path = folder + uuid + file_name
         elif file_ext == ".preset":
-            if doesPresetExist(s3_client, bucket, file_path, dictPresets):
+            if doesPresetExist(gcs_client, bucket, file_path, dictPresets):
                 continue
                 #return dictPresets[os.path.basename(file_path)], None
             folder = "preset/"
@@ -192,7 +222,10 @@ def putInS3(args):
             #return '', None
 
         with open(file_path, "rb") as ffile:
-            uploader = boto3.Session().client("s3").upload_fileobj
-            uploader(ffile, bucket, path)
+            # uploader = boto3.Session().client("s3").upload_fileobj
+            # uploader(ffile, bucket, path)
+            bucket = gcs_client.get_bucket(bucket)
+            blob = bucket.blob(path)
+            blob.upload_from_file(ffile)
 
         #return path, None
