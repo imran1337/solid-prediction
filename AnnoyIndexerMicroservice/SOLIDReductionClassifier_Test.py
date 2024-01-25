@@ -6,7 +6,7 @@ from urllib.parse import unquote
 from urllib.parse import urlparse, unquote
 
 # URL for getting the annoy indexer from
-SERVER_URI = 'http://127.0.0.1:5000'
+SERVER_URI = 'https://annoy-script-qtoj2wikka-uc.a.run.app'
 UPLOAD_SERVER_URI = 'http://upload-files-ms.eba-rvniqqiy.eu-central-1.elasticbeanstalk.com/'
 FM_SERVER_URI = 'http://slim-feature-map-ms.eba-pibymigp.eu-central-1.elasticbeanstalk.com/'
 
@@ -17,33 +17,35 @@ def download_file_from_signed_url(signed_url, destination_dir):
     if not os.path.exists(destination_dir):
         os.makedirs(destination_dir)
 
-    with requests.get(signed_url, stream=True) as r:
+    # Use a session for connection pooling
+    with requests.Session() as session:
         try:
-            r.raise_for_status()
+            with session.get(signed_url, stream=True) as r:
+                r.raise_for_status()
+
+                # Extract the filename from the URL path
+                url_path = urlparse(r.url).path
+                filename = os.path.basename(unquote(url_path))
+                destination_path = os.path.join(destination_dir, filename)
+
+                total_size = int(r.headers.get('content-length', 0))
+                block_size = 4096  # Increase block size for faster downloads
+
+                with open(destination_path, 'wb') as f, tqdm(
+                    desc="Downloading",
+                    total=total_size,
+                    unit="B",
+                    unit_scale=True,
+                    unit_divisor=1024,
+                ) as pbar:
+                    for chunk in r.iter_content(chunk_size=block_size):
+                        f.write(chunk)
+                        pbar.update(len(chunk))
+
         except requests.exceptions.RequestException as e:
             return False, f'Request Error: {e}'
 
-        # Extract the filename from the URL path
-        url_path = urlparse(r.url).path
-        filename = os.path.basename(unquote(url_path))
-        destination_path = os.path.join(destination_dir, filename)
-
-        total_size = int(r.headers.get('content-length', 0))
-        block_size = 1024
-
-        with open(destination_path, 'wb') as f, tqdm(
-            desc="Downloading",
-            total=total_size,
-            unit="B",
-            unit_scale=True,
-            unit_divisor=1024,
-        ) as pbar:
-            for chunk in r.iter_content(chunk_size=block_size):
-                f.write(chunk)
-                pbar.update(len(chunk))
-                time.sleep(0.1)
-
-        return True, destination_path
+    return True, destination_path
 
 isRunning = False
 
