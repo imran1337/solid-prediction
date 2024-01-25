@@ -102,15 +102,7 @@ def generateFeatureMapCreationTask(bucketName, id):
 
             results = executor.map(generateFeatureMap, args)
 
-            # Check if any errors occurred during the uploads
-            if any(result and "Error" in result for result in results):
-                # Handle errors, log, or raise an exception
-                print("Some files failed to upload. Details:")
-                for result in results:
-                    if result and "Error" in result:
-                        print(result)
-            else:
-                print("All files uploaded successfully")
+            print(f'===results=== {results}')
 
     except Exception as err:
         print(f"Error in generateFeatureMapCreationTask process: {err}")
@@ -120,8 +112,8 @@ def generateFeatureMapCreationTask(bucketName, id):
 def generateFeatureMap(args):
     '''
     Processing method to extract features from images
-    :param args: Args[0] = Bucket Name, Args[1] = Package (list of S3 Objects) divided from the complete list
-    :return: True on Success, None otherwise
+    :param args: Args[0] = Bucket Name, Args[1] = Package (list of GCS Blob objects) divided from the complete list
+    :return: True on Success, False otherwise
     '''
     # Gets the information in bytes
     indexer = Index()
@@ -131,46 +123,45 @@ def generateFeatureMap(args):
     id = args[2]
 
     failed = False
-    while failed == False:
+    while not failed:
         try:
-            # s3Client = boto3.client('s3')
             # Set up Google Cloud Storage client
             gcs_client = storage.Client()
 
-            # Your Google Cloud Storage bucket name
-            # gcs_bucket_name = os.getenv("GOOGLE_CLOUD_BUCKET_ID")
-            # gcs_bucket = gcs_client.bucket(gcs_bucket_name)
-
             failed = True
         except Exception as error:
-            mongoReplace(id, "Failed to connect to aws.")
+            mongoReplace(id, "Failed to connect to GCS.")
             time.sleep(0.5)
             pass
 
     for obj in package:
         try:
-            awsImageBytes = obj.get()['Body'].read()  # try except here
+            gcsImageBytes = obj.download_as_bytes()
         except Exception as error:
-            mongoReplace(id, "Failed to get the Body of the s3 object.")
+            mongoReplace(id, "Failed to get the Body of the GCS object.")
             print(error)
-            break
+            return False  # Return False on failure
+
         try:
-            awsImageBytesFeatures = indexer.extract_single_feature(  # try except here
-                awsImageBytes, True)
+            gcsImageBytesFeatures = indexer.extract_single_feature(gcsImageBytes, True)
         except Exception as error:
             mongoReplace(id, "Failed to extract the single feature.")
             print(error)
-            break
-        fileName = obj.key.replace(
-            "img/", "featuremap/").rsplit('.', 1)[0] + ".bin"
+            return False  # Return False on failure
+
+        fileName = obj.name.replace("img/", "featuremap/").rsplit('.', 1)[0] + ".bin"
         try:
-            gcs_client.upload_fileobj(io.BytesIO(  # try except here
-                awsImageBytesFeatures.tobytes()), bucketName, fileName)
+            bucket = gcs_client.get_bucket(bucketName)
+            blob = bucket.blob(fileName)
+            blob.upload_from_file(io.BytesIO(gcsImageBytesFeatures.tobytes()), content_type="application/octet-stream")
         except Exception as error:
-            mongoReplace(id, "Failed to upload feature map to aws.")
+            mongoReplace(id, "Failed to upload feature map to GCS.")
             print(error)
-            break
+            return False  # Return False on failure
+
     return True
+
+
 
 
 @application.route("/get-result/<id>", methods=['GET'])
@@ -227,7 +218,7 @@ def process_file(filename, additionalInfo, fileId):
             print('3')
             fileOperations.uploadFileType(destZipPath, 'preset', bucket, storage_client, fileId, dictPresets)
             print('4')
-            generateFeatureMapCreationTask(bucket, fileId)
+            generateFeatureMapCreationTask(gcs_bucket_name, fileId)
             print('5')
         else:
             print('Path not valid')
