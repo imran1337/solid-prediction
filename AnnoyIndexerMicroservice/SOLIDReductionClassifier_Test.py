@@ -4,14 +4,15 @@ import time
 from tqdm import tqdm
 from urllib.parse import unquote
 from urllib.parse import urlparse, unquote
+from zipfile import ZipFile
 
 # URL for getting the annoy indexer from
 SERVER_URI = 'https://annoy-script-qtoj2wikka-uc.a.run.app'
 UPLOAD_SERVER_URI = 'http://upload-files-ms.eba-rvniqqiy.eu-central-1.elasticbeanstalk.com/'
 FM_SERVER_URI = 'http://slim-feature-map-ms.eba-pibymigp.eu-central-1.elasticbeanstalk.com/'
 
-def download_file_from_signed_url(signed_url, destination_dir):
-    """Download a file from a signed URL with a progress bar."""
+def download_and_extract_zip(signed_url, destination_dir):
+    """Download a zip file from a signed URL, extract it, and remove the zip file."""
 
     # Create destination directory if it doesn't exist
     if not os.path.exists(destination_dir):
@@ -42,10 +43,17 @@ def download_file_from_signed_url(signed_url, destination_dir):
                         f.write(chunk)
                         pbar.update(len(chunk))
 
+            # Extract the zip file
+            with ZipFile(destination_path, 'r') as zip_ref:
+                zip_ref.extractall(destination_dir)
+
+            # Remove the downloaded zip file
+            os.remove(destination_path)
+
         except requests.exceptions.RequestException as e:
             return False, f'Request Error: {e}'
 
-    return True, destination_path
+    return True, destination_dir
 
 isRunning = False
 
@@ -93,7 +101,7 @@ def generateIndexer(indexerPath, vendor, category):
                 fileUrl = r.json().get('fileUrl')
                 # Download and save the file
                 download_path = os.path.join(indexerPath, vendor, category)
-                success, download_result = download_file_from_signed_url(fileUrl, download_path)
+                success, download_result = download_and_extract_zip(fileUrl, download_path)
 
                 if success:
                     return True, f'Generated valid indexer file. Downloaded to: {download_result}'
