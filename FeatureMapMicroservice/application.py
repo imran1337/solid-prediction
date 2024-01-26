@@ -1,12 +1,10 @@
 import shutil
 
 from flask import Flask, request
-import boto3
 import os
 import io
 import pymongo
 import time
-import uuid
 import json
 from featureMap import Index
 from concurrent.futures import ThreadPoolExecutor
@@ -56,12 +54,11 @@ def _checkDBSession(clientDB):
     return clientDB
 
 def mongoReplace(id, errorMessage):
-    # session = _checkDBSession(mongoClient)
-    # if session:
-    #     collection = session[DB_NAME]["featureMapErrors"]
-    #     collection.replace_one(
-    #         {"id": id}, {"id": id, "error": errorMessage, "timestamp": datetime.now()})
-    print(f"Found error {id} - {errorMessage}")
+    session = _checkDBSession(mongoClient)
+    if session:
+        collection = session[DB_NAME]["featureMapErrors"]
+        collection.replace_one(
+            {"id": id}, {"id": id, "error": errorMessage, "timestamp": datetime.now()})
 
 # Mongo Global vars
 DB_NAME = "slim-prediction"
@@ -80,8 +77,6 @@ def generateFeatureMapCreationTask(bucketName, id):
 
         client = storage.Client()
         bucket = client.bucket(bucketName)
-
-        print("Called")
         
         try:
             lstGCSObjects = list(bucket.list_blobs(prefix="img/" + id)) 
@@ -101,8 +96,6 @@ def generateFeatureMapCreationTask(bucketName, id):
                 args.append([bucketName, blob_list, id])
 
             results = executor.map(generateFeatureMap, args)
-
-            print(f'===results=== {results}')
 
     except Exception as err:
         print(f"Error in generateFeatureMapCreationTask process: {err}")
@@ -203,13 +196,9 @@ def process_file(filename, additionalInfo, fileId):
             print('0')
             dictPresets = fileOperations.addJsonToMongo(jsonPath, additionalInfo, mongoClient, DB_NAME, COLLECTION_NAME)
             print('1')
-            # Usage example
-            bucket = os.environ['GOOGLE_CLOUD_BUCKET_ID']
-            # session = boto3.Session()
-            # s3_client = session.client("s3")
-
 
             # GCS Bucket and Blob setup
+            bucket = os.environ['GOOGLE_CLOUD_BUCKET_ID']
             storage_client = storage.Client()
             bucket = storage_client.bucket(bucket)
 
@@ -243,9 +232,9 @@ def upload_file():
     file.save(filePath)
 
     dictUsers[fileId] = threadExecutor.submit(process_file, filePath, data, fileId)
-    # session = _checkDBSession(mongoClient)
-    # if not session:
-    #     mongoReplace(fileId, 'Error getting the Feature Map MS DB.')
+    session = _checkDBSession(mongoClient)
+    if not session:
+        mongoReplace(fileId, 'Error getting the Feature Map MS DB.')
 
     return json.dumps({'id': fileId})
 
