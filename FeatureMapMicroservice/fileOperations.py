@@ -1,15 +1,12 @@
 import subprocess
 import os
 import zipfile
-import pymongo
 import json
 import uuid
 import hashlib
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
-import boto3
 import shutil
-from google.cloud import storage
 
 def decrypt_file(file_path, fileId):
     # Construct the command
@@ -80,10 +77,7 @@ def getUniqueFileId():
 def addJsonToMongo(json_file_path, additionalInfo, client, mongodb_database, mongodb_collection):
     # Load JSON data from file
     print('blubb')
-    print(json_file_path)
     with open(json_file_path, 'r') as file:
-        print(json_file_path)
-        print(file)
         json_data = json.load(file)
         #print(json_data)
 
@@ -96,7 +90,6 @@ def addJsonToMongo(json_file_path, additionalInfo, client, mongodb_database, mon
     dictPresets = {}
     # Insert each record into MongoDB
     for record in json_data:
-        print(record)
         newRecord = {}
         # This will stop if no preset file is present in the record
         hashVal = get_hash(os.path.join(os.path.dirname(json_file_path), 'preset', record['preset_file_name']))
@@ -156,7 +149,7 @@ def uploadFileType(destZipPath, fileType, bucket, gcs_client, fileId, dictPreset
                 args.append([[os.path.join(destZipPath, fileType, obj)
                             for obj in arrFiles[fileChunkIdx[0]: fileChunkIdx[1]]],
                             bucket, gcs_client, fileId, dictPresets])
-            results = executor.map(putInS3, args)
+            results = executor.map(putInGCS, args)
 
             # Check if any errors occurred during the uploads
             if any(result and "Error" in result for result in results):
@@ -173,7 +166,7 @@ def uploadFileType(destZipPath, fileType, bucket, gcs_client, fileId, dictPreset
         print(f"Unexpected error in uploadFileType: {e}")
 
     #for obj in os.listdir(os.path.join(destZipPath, fileType)):
-    #    location, error = putInS3(os.path.join(destZipPath, fileType, obj), bucket, gcs_client, fileId, dictPresets)
+    #    location, error = putInGCS(os.path.join(destZipPath, fileType, obj), bucket, gcs_client, fileId, dictPresets)
     #    if error is not None:
     #        print(f"Error uploading file: {error}")
     #    else:
@@ -192,7 +185,7 @@ def doesPresetExist(gcs_client, bucket, name, dictPresets):
     return False
 
 
-def putInS3(args):
+def putInGCS(args):
     #file_path, bucket, gcs_client, uuid, dictPresets={}
     arrFiles = list(args[0])
     bucket = args[1]
@@ -222,7 +215,7 @@ def putInS3(args):
             #return '', None
 
         with open(file_path, "rb") as ffile:
-            # uploader = boto3.Session().client("s3").upload_fileobj
+            # uploader = boto3.Session().client("GCS").upload_fileobj
             # uploader(ffile, bucket, path)
             bucket = gcs_client.get_bucket(bucket)
             blob = bucket.blob(path)
