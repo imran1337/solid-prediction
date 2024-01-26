@@ -418,12 +418,16 @@ def process():
         if indexing_in_progress:
             return jsonify({'status': False, 'msg': 'Indexing process is already in progress.'})
 
-        # Start the background task using a separate thread
-        threading.Thread(target=start_indexing_process).start()
+        # Set the variable to True before releasing the lock
+        indexing_in_progress = True
 
-        print("Initiating indexing process...")
+    # Start the background task using a separate thread
+    threading.Thread(target=start_indexing_process).start()
+
+    print("Initiating indexing process...")
 
     return jsonify({'status': True, 'msg': 'Indexing process has been initiated.'})
+
 
 def annoyIndexerJob(vendor, cat):
     try:
@@ -446,11 +450,8 @@ def annoyIndexerJob(vendor, cat):
 
 def start_indexing_process():
     global indexing_in_progress
-
+    
     try:
-        with indexing_lock:
-            indexing_in_progress = True
-
         # Start the indexing process for each vendor_info sequentially
         for vendor_info in vendor_information:
             vendor = vendor_info.vendor
@@ -459,7 +460,7 @@ def start_indexing_process():
 
             # Acquire the semaphore before starting the Annoy indexer task
             semaphore.acquire()
-            
+
             try:
                 result = annoyIndexerJob(vendor, category)
 
@@ -479,6 +480,7 @@ def start_indexing_process():
         print(f'Error in start_indexing_process: {error}')
 
     finally:
+        # Reset the variable to False after the indexing process is complete
         with indexing_lock:
             indexing_in_progress = False
 
