@@ -1,8 +1,6 @@
 from flask import Flask, request, current_app, abort, jsonify
 from pathlib import Path
 from cryptography.fernet import Fernet as F
-import boto3
-from botocore.exceptions import ClientError
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import tqdm
 import os
@@ -49,7 +47,26 @@ class Vendor:
         self.category = category
 
 vendor_information = [
-    Vendor("Touareg_PA", "LOD_1"),
+    Vendor("Touareg_1", "LOG_1"),
+    Vendor("Touareg_2", "LOG_2"),
+    Vendor("Touareg_3", "LOG_3"),
+    Vendor("Touareg_4", "LOG_4"),
+    Vendor("Touareg_5", "LOG_5"),
+    Vendor("Touareg_6", "LOG_6"),
+    Vendor("Touareg_7", "LOG_7"),
+    Vendor("Touareg_8", "LOG_8"),
+    Vendor("Touareg_9", "LOG_9"),
+    Vendor("Touareg_10", "LOG_10"),
+    Vendor("Touareg_11", "LOG_11"),
+    Vendor("Touareg_12", "LOG_12"),
+    Vendor("Touareg_13", "LOG_13"),
+    Vendor("Touareg_14", "LOG_14"),
+    Vendor("Touareg_15", "LOG_15"),
+    Vendor("Touareg_16", "LOG_16"),
+    Vendor("Touareg_17", "LOG_17"),
+    Vendor("Touareg_18", "LOG_18"),
+    Vendor("Touareg_19", "LOG_19"),
+    Vendor("Touareg_20", "LOG_20")
 ]
 
 # MongoDB connection
@@ -134,36 +151,29 @@ def startIndexing(image_data, indexerPath, vendor, category):
     t.build(100)  # 100 trees
     t.save(os.path.join(indexerPath, vendor + '_' + category + '_fvecs.ann'))
 
-try:
-    s3 = boto3.resource('s3')
-except Exception as error:
-    print(error)
 
 def downloadPackage(args):
-    bucketName = args[0]
+    bucket_name = args[0]
     package = args[1]
-    subTaskId = args[2]
+    sub_task_id = args[2]
 
     def download_single_object(obj):
         try:
-            awsImage = s3.Object(bucketName, obj)
-            awsImageBytes = awsImage.get()['Body'].read()
-            arrNumpy = numpy.frombuffer(awsImageBytes, dtype=numpy.float32)
-            return arrNumpy
-        except ClientError as e:
+            blob = gcs_client.bucket(bucket_name).blob(obj)
+            gcs_bytes = blob.download_as_bytes()
+            arr_numpy = numpy.frombuffer(gcs_bytes, dtype=numpy.float32)
+            return arr_numpy
+        except Exception as e:
             print(e)
             return None
 
-    # Use ThreadPoolExecutor to parallelize downloads
     with ThreadPoolExecutor() as executor:
-        # Use as_completed to iterate over completed futures
         futures = [executor.submit(download_single_object, obj) for obj in package]
         results = [future.result() for future in as_completed(futures) if future.result() is not None]
 
-    # Calculate the feature length
-    featureLen = len(results[0]) if results else 0
+    feature_len = len(results[0]) if results else 0
 
-    return [results, featureLen, subTaskId]
+    return [results, feature_len, sub_task_id]
 
 def is_zip_file_exists(object_name:str):
     blob = gcs_bucket.blob(object_name)
@@ -207,9 +217,6 @@ def generate_signed_url(object_name: str):
         return None
 
 def generateAnnoyIndexerTask(currentPath, vendor, category):
-    # Init AWS
-    bucketName = os.getenv("S3_BUCKET")
-
     # Init MongoDB
     session = _checkDBSession(mongo_client)
     if not session:
@@ -248,11 +255,11 @@ def generateAnnoyIndexerTask(currentPath, vendor, category):
         
         if environment == 'development':
             for fileChunkIdx in fileTuples[:1]:
-                args.append([bucketName, featureFiles[fileChunkIdx[0]: fileChunkIdx[1]], subTaskId])
+                args.append([gcs_bucket_name, featureFiles[fileChunkIdx[0]: fileChunkIdx[1]], subTaskId])
                 subTaskId += 1
         else:
             for fileChunkIdx in fileTuples:
-                args.append([bucketName, featureFiles[fileChunkIdx[0]: fileChunkIdx[1]], subTaskId])
+                args.append([gcs_bucket_name, featureFiles[fileChunkIdx[0]: fileChunkIdx[1]], subTaskId])
                 subTaskId += 1
 
 
@@ -355,53 +362,6 @@ def encryptMessage(key, msg):
     treatment = handler.encrypt(encoded_msg)
     return str(treatment, 'utf-8')
 
-def generateIndexerWorker(vendor, category):
-    '''
-    Download the annoy indexer for the given vendor and the given category
-    :param vendor: Vendor
-    :param category: Category which Indexer to get
-    return: True, '' on success, False, Error description otherwise
-    '''
-    print('generateIndexerWorker started for', vendor, category)
-    try:
-        data = annoyIndexerJob(vendor, category)
-        strTaskId = json.loads(data).get('id')
-        print('Task ID', strTaskId)
-    except ValueError as e:
-        msg = f"Error decoding JSON: {e}"
-        print(msg)
-        return False, msg
-
-    if strTaskId is None:
-        msg = 'Connection Error: Could not get a valid Task Id.'
-        print(msg)
-        return False, msg
-
-    while True:
-        try:
-            data = getAnnoyIndexerJob(strTaskId)
-            result = json.loads(data).get('result')
-            print('result', result)
-        except ValueError as e:
-            msg = f"Error decoding JSON: {e}"
-            print(msg)
-            return False, msg
-
-        if result == 'running' or result == 'not started yet':
-            time.sleep(1)
-        elif result == 'cancelled':
-            msg = 'Process cancelled by the server.'
-            print(msg)
-            return False, msg
-        elif result == 'done':
-            msg = 'Generated valid indexer file.'
-            print(msg)
-            return True, msg
-        else:
-            msg = 'Undefined state on Server for the current task.'
-            print(msg)
-            return False, msg
-
 
 @application.route("/annoy-indexer-setup/<vendor>/<cat>", methods=['GET'])
 def annoyIndexer(vendor, cat):
@@ -466,19 +426,22 @@ def process():
     return jsonify({'status': True, 'msg': 'Indexing process has been initiated.'})
 
 def annoyIndexerJob(vendor, cat):
-    with application.app_context():
-        id = str(vendor + '_' + cat)
-        try:
-            generateAnnoyIndexerTask(current_app.root_path, vendor, cat)
-            # Init MongoDB
-            session = _checkDBSession(mongo_client)
-            if not session:
-                mongoReplace(id, 'Error getting the DB for Annoy IDX')
-        except Exception as e:
-            print(f"An error occurred: {str(e)}")
-            mongoReplace(id, f'An error occurred: {str(e)}')
-        
-        return json.dumps({'id': id})
+    try:
+        with application.app_context():
+            id = str(vendor + '_' + cat)
+            try:
+                generateAnnoyIndexerTask(current_app.root_path, vendor, cat)
+                # Init MongoDB
+                session = _checkDBSession(mongo_client)
+                if not session:
+                    mongoReplace(id, 'Error getting the DB for Annoy IDX')
+            except Exception as e:
+                print(f"An error occurred: {str(e)}")
+                mongoReplace(id, f'An error occurred: {str(e)}')
+            
+            return json.dumps({'id': id})
+    except Exception as err:
+        print(f"===Error in annoyIndexerJob: === {err}")
 
 
 def start_indexing_process():
@@ -557,39 +520,32 @@ def findMatchingPart():
 @application.route("/get-preset-file", methods=['POST'])
 def getPresetFile():
     content = request.json
-    requestPresetFile = content["data"]
-    requestPresetFileKey = "preset/" + requestPresetFile
+    request_preset_file = content["data"]
+    request_preset_file_key = f"preset/{request_preset_file}"
+
     try:
-        s3 = boto3.resource('s3')
-        bucketName = os.getenv("S3_BUCKET")
+        blob = gcs_client.bucket(gcs_bucket_name).blob(request_preset_file_key)
+        gcs_preset_bytes = blob.download_as_bytes()
     except Exception as error:
         print(error)
-    awsPresetFile = s3.Object(bucketName, requestPresetFileKey)
-    try:
-        awsPresetBytes = awsPresetFile.get()['Body'].read()
-    except Exception as error:
-        print(error)
-    return awsPresetBytes
+
+    return gcs_preset_bytes
 
 
 @application.route("/get-img-file", methods=['POST'])
 def getImageFile():
     content = request.json
-    requestImageFile = content["data"]
-    requestImageFileKey = "img/" + requestImageFile
+    request_image_file = content["data"]
+    request_image_file_key = f"img/{request_image_file}"
 
     try:
-        s3 = boto3.resource('s3')
-        bucketName = os.getenv("S3_BUCKET")
-    except Exception as error:
-        print(error)
-    awsPresetFile = s3.Object(bucketName, requestImageFileKey)
-    try:
-        awsPresetBytes = awsPresetFile.get()['Body'].read()
+        blob = gcs_client.bucket(gcs_bucket_name).blob(request_image_file_key)
+        gcs_image_bytes = blob.download_as_bytes()
     except Exception as error:
         print(error)
 
-    return awsPresetBytes
+    return gcs_image_bytes
+
 
 
 @application.route("/is-alive", methods=['GET'])
