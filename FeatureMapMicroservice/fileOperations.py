@@ -215,8 +215,6 @@ def putInGCS(args):
             #return '', None
 
         with open(file_path, "rb") as ffile:
-            # uploader = boto3.Session().client("GCS").upload_fileobj
-            # uploader(ffile, bucket, path)
             bucket = gcs_client.get_bucket(bucket)
             blob = bucket.blob(path)
             blob.upload_from_file(ffile)
