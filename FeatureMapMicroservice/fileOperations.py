@@ -6,7 +6,6 @@ import uuid
 import hashlib
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
-import shutil
 
 def decrypt_file(file_path, fileId):
     # Construct the command
@@ -22,18 +21,6 @@ def decrypt_file(file_path, fileId):
         return ''
 
     return os.path.join(file_path).replace('smp', 'zip')
-
-def copy_zip_file(file_path, fileId):
-    static_folder = os.path.join(os.getcwd(), 'static')
-    dest_path = os.path.join(static_folder, 'upload', fileId + '.zip')
-
-    try:
-        shutil.copy2(file_path, dest_path)
-        print('File copy completed successfully.')
-        return dest_path
-    except Exception as e:
-        print(f'File copy failed with error: {e}')
-        return ''
 
 def get_hash(filename):
     try:

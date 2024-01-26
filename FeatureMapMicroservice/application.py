@@ -180,8 +180,7 @@ def getResult(id):
 # to updated
 def process_file(filename, additionalInfo, fileId):
     # Perform your long-running file processing task here
-    # destPath = fileOperations.decrypt_file(filename, fileId)
-    destPath = fileOperations.copy_zip_file(filename, fileId)
+    destPath = fileOperations.decrypt_file(filename, fileId)
     additionalInfo = json.loads(additionalInfo)
     additionalInfo['uuid'] = fileId
     print('-2')
