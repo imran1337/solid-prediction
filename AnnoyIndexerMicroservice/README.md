@@ -16,7 +16,14 @@ Update the values of the environment variables in the newly created `.env` file.
 pip install -r requirements.txt
 ```
 
-3. Run the Flask application with the following commands:
+3. Setup redis server:
+
+```bash
+docker pull redis
+docker run --name redis-container -p 6379:6379 -d redis
+```
+
+4. Run the Flask application with the following commands:
 
 ```bash
 export FLASK_APP=application.py
