@@ -18,9 +18,9 @@ from google.cloud import storage
 from zipfile import ZipFile, ZipInfo
 from google.api_core.exceptions import NotFound
 import dotenv
-import time
 import threading
 from threading import Semaphore
+from redis import Redis
 
 dotenv.load_dotenv()
 
@@ -32,6 +32,12 @@ gcs_client = storage.Client()
 # Your Google Cloud Storage bucket name
 gcs_bucket_name = os.getenv("GOOGLE_CLOUD_BUCKET_ID")
 gcs_bucket = gcs_client.bucket(gcs_bucket_name)
+
+redis_client = Redis.from_url(os.getenv("REDIS_URL"))
+
+# Global variable to track indexing status
+INDEXING_LOCK_NAME = "indexing_lock"
+
 
 # Flask application
 application = Flask(__name__)
@@ -400,33 +406,41 @@ def getAnnoyIndexer(id):
 def index():
     return 'Running'
 
-# Global variable to track whether the indexing process is running
-indexing_in_progress = False
+# Acquire the non-blocking lock
+def acquire_indexing_lock():
+    return redis_client.setnx(INDEXING_LOCK_NAME, 1)
 
-# Lock for synchronizing access to the global variable
-indexing_lock = threading.Lock()
+# Release the lock
+def release_indexing_lock():
+    redis_client.delete(INDEXING_LOCK_NAME)
 
 # Semaphore for synchronization
 semaphore = Semaphore()
 
 @application.route("/process", methods=['GET'])
 def process():
-    global indexing_in_progress
 
-    # Check if the indexing process is already in progress
-    with indexing_lock:
-        if indexing_in_progress:
-            return jsonify({'status': False, 'msg': 'Indexing process is already in progress.'})
+     # Acquire the distributed lock
+    lock_acquired = acquire_indexing_lock()
 
-        # Set the variable to True before releasing the lock
-        indexing_in_progress = True
+    print(f'===lock_acquired=== {lock_acquired}')
 
-    # Start the background task using a separate thread
-    threading.Thread(target=start_indexing_process).start()
+    if not lock_acquired:
+        return jsonify({'status': False, 'msg': 'Indexing process is already in progress.'})
 
-    print("Initiating indexing process...")
 
-    return jsonify({'status': True, 'msg': 'Indexing process has been initiated.'})
+    try:
+        # Start the background task using a separate thread
+        threading.Thread(target=start_indexing_process).start()
+
+        print("Initiating indexing process...")
+
+        return jsonify({'status': True, 'msg': 'Indexing process has been initiated.'})
+
+    except Exception as error:
+        release_indexing_lock()
+        print(f'Error in process: {error}')
+        return jsonify({'status': False, 'msg': 'Error in Indexing Process'})
 
 
 def annoyIndexerJob(vendor, cat):
@@ -448,9 +462,7 @@ def annoyIndexerJob(vendor, cat):
         print(f"===Error in annoyIndexerJob: === {err}")
 
 
-def start_indexing_process():
-    global indexing_in_progress
-    
+def start_indexing_process():    
     try:
         # Start the indexing process for each vendor_info sequentially
         for vendor_info in vendor_information:
@@ -480,9 +492,7 @@ def start_indexing_process():
         print(f'Error in start_indexing_process: {error}')
 
     finally:
-        # Reset the variable to False after the indexing process is complete
-        with indexing_lock:
-            indexing_in_progress = False
+        release_indexing_lock()
 
 
 
