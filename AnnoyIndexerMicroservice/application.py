@@ -564,6 +564,15 @@ def getImageFile():
 def isAlive():
     return json.dumps({'alive': 1})
 
+@application.route("/reset-redis", methods=['GET'])
+def resetRedis():
+    try:
+        # Delete the indexing lock in Redis
+        redis_client.delete(INDEXING_LOCK_NAME)
+        return jsonify({'status': True, 'msg': 'Redis reset successful.'})
+    except Exception as error:
+        return jsonify({'status': False, 'msg': f'Error resetting Redis: {str(error)}'})
+
 
 if __name__ == '__main__':
     application.run(port=int(os.environ.get("PORT", 8080)),host='0.0.0.0',debug=True, threaded=True)
